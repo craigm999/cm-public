@@ -1,0 +1,976 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conditional Access Review</title>
+<!--
+  Dashboard for the CSV produced by Get-EntraCAPolicyReport.ps1.
+  Fully self-contained: no network requests, the CSV is read locally in the browser.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ee;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6;
+    --lvl-1: #86b6ef; --lvl-2: #2a78d6; --lvl-3: #104281;
+    --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+    --critical-text: #b42f2f; --excl-text: #9a4a17;
+    --accent-wash: rgba(42,120,214,0.10); --excl-wash: rgba(236,131,90,0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+      --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --lvl-1: #184f95; --lvl-2: #3987e5; --lvl-3: #9ec5f4;
+      --critical-text: #e66767; --excl-text: #f0a27f;
+      --accent-wash: rgba(57,135,229,0.16); --excl-wash: rgba(236,131,90,0.14);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --lvl-1: #184f95; --lvl-2: #3987e5; --lvl-3: #9ec5f4;
+    --critical-text: #e66767; --excl-text: #f0a27f;
+    --accent-wash: rgba(57,135,229,0.16); --excl-wash: rgba(236,131,90,0.14);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--ink-2); margin: 0; }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+  .card-sub { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; }
+  button, select, input[type=search] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; }
+  button { cursor: pointer; }
+  button:hover { background: var(--surface-2); }
+  button.primary { background: var(--series-1); color: #fff; border-color: transparent; }
+  button.primary:hover { filter: brightness(1.08); }
+  button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; margin-bottom: 12px; }
+  #drop { border: 1.5px dashed var(--axis); border-radius: 12px; padding: 48px 16px; text-align: center; background: var(--surface); color: var(--ink-2); }
+  #drop.over { border-color: var(--series-1); background: var(--accent-wash); }
+  #drop strong { color: var(--ink); display: block; font-size: 16px; margin-bottom: 6px; }
+  #drop code { background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 16px; }
+  .filters label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .filters input[type=search] { min-width: 220px; flex: 1 1 220px; max-width: 380px; }
+
+  .tiles { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .tile { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
+  button.tile:hover { background: var(--surface-2); }
+  .tile[aria-pressed="true"] { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); background: var(--accent-wash); }
+  .tile .label { color: var(--ink-2); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .tile .value { font-size: 30px; font-weight: 600; line-height: 1.15; }
+  .tile .meta { color: var(--muted); font-size: 12px; }
+  .tile.hero .value { font-size: 48px; }
+  .flagdot { width: 8px; height: 8px; border-radius: 50%; background: var(--critical); flex: none; }
+
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .grid2 > .card { margin-bottom: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); margin: 0 0 10px; padding: 0; list-style: none; }
+  .legend li { display: flex; align-items: center; gap: 6px; }
+  .legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .legend .dotkey { width: 8px; height: 8px; border-radius: 50%; background: var(--critical); box-shadow: 0 0 0 2px var(--surface); }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .hit { cursor: pointer; }
+  .hit:hover .mark, .hit:focus .mark { filter: brightness(1.12); }
+  .hit:focus { outline: none; }
+  .hit:focus .mark { stroke: var(--ink); stroke-width: 1.5; }
+  .matrix-scroll { overflow: auto; max-height: 720px; border-radius: 8px; }
+  .matrix-scroll svg { display: block; }
+  .cell { cursor: pointer; }
+  .cell:hover rect, .cell:focus rect { stroke: var(--ink); stroke-width: 1.5; }
+  .cell:focus { outline: none; }
+  .rowlabel { cursor: pointer; }
+  .rowlabel:hover text { text-decoration: underline; }
+
+  #pair { margin-top: 14px; border-top: 1px solid var(--grid); padding-top: 14px; }
+  .pair-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 10px; }
+  .verdict { font-size: 13px; color: var(--ink-2); }
+  .pair-grid { display: grid; grid-template-columns: 150px minmax(0, 1fr) minmax(0, 1fr); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; font-size: 13px; }
+  .pair-grid > div { padding: 8px 10px; border-bottom: 1px solid var(--grid); min-width: 0; overflow-wrap: anywhere; }
+  .pair-grid > div.h { background: var(--surface-2); font-weight: 600; color: var(--ink-2); }
+  .pair-grid > div.dim { color: var(--ink-2); }
+  .pair-grid > div.ov { background: var(--accent-wash); }
+  .pair-grid > div:nth-last-child(-n+3) { border-bottom: 0; }
+  .shared { font-weight: 600; }
+  .why { margin: 10px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 13px; }
+
+  .vals { display: flex; flex-direction: column; gap: 2px; }
+  .inc::before { content: "+ "; color: var(--muted); }
+  .exc { color: var(--excl-text); }
+  .exc::before { content: "− "; }
+  .unres { color: var(--critical-text); }
+  .tag { display: inline-flex; align-items: center; font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+  .state { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; }
+  .state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .state.on::before { background: var(--good); }
+  .state.report::before { background: var(--warning); }
+  .grant { white-space: nowrap; font-size: 12px; font-weight: 600; }
+  .grant.block { color: var(--critical-text); }
+
+  #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); opacity: 0; transition: opacity .1s; max-width: 320px; }
+  #tip .v { font-size: 14px; font-weight: 600; }
+  #tip .k { color: var(--ink-2); }
+  #tip .hint { color: var(--muted); margin-top: 4px; }
+
+  .table-head { display: flex; flex-wrap: wrap; gap: 8px 12px; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .focus-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-wash); border: 1px solid var(--series-1); border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 13px; max-width: 100%; }
+  .focus-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .focus-chip button { border: 0; background: transparent; padding: 0 6px; border-radius: 999px; font-size: 15px; line-height: 1; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; max-height: 640px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { position: sticky; top: 0; background: var(--surface-2); font-weight: 600; color: var(--ink-2); white-space: nowrap; z-index: 1; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th .arrow { color: var(--muted); margin-left: 4px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.wide { min-width: 170px; max-width: 300px; }
+  td.mid { min-width: 140px; max-width: 220px; }
+  td.name { min-width: 160px; max-width: 240px; font-weight: 500; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--surface-2); }
+  tr.sel td { background: var(--accent-wash); }
+  tr:last-child td { border-bottom: 0; }
+  .muted { color: var(--muted); }
+  .more { margin-top: 10px; color: var(--ink-2); font-size: 13px; }
+  .detail td { background: var(--surface-2); }
+  .detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px 20px; padding: 4px 0; }
+  .banner { border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--border); display: flex; gap: 10px; }
+  .banner .ico { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--warning); color: #0b0b0b; font-weight: 700; font-size: 12px; display: grid; place-items: center; margin-top: 1px; }
+  footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
+  footer p { margin: 4px 0; }
+  details.data { margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+  details.data summary { cursor: pointer; }
+  details.data table { margin-top: 8px; }
+
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 640px) {
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tile.hero { grid-column: 1 / -1; }
+    .tile .value { font-size: 26px; } .tile.hero .value { font-size: 40px; }
+    .pair-grid { grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1fr); font-size: 12px; }
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Conditional Access review</h1>
+      <p class="sub" id="subtitle">Policy overlap, inclusions and exclusions</p>
+    </div>
+    <div class="actions">
+      <input type="file" id="file" accept=".csv,text/csv" class="hidden">
+      <button class="primary" id="btnLoad" type="button">Load CSV…</button>
+      <button id="btnSample" type="button">Sample data</button>
+    </div>
+  </header>
+
+  <div id="drop">
+    <strong>Drop the Conditional Access CSV here</strong>
+    Generate it with <code>.\Get-EntraCAPolicyReport.ps1 -OutputPath .\ca.csv</code>, then drop it here or use <em>Load CSV</em>.<br>
+    The file is read in your browser only; nothing is uploaded.
+  </div>
+
+  <main id="dash" class="hidden">
+    <div id="banners"></div>
+    <div class="filters" role="group" aria-label="Filters">
+      <label>Policies
+        <select id="fState">
+          <option value="active" selected>Enabled + report-only</option>
+          <option value="enabled">Enabled only</option>
+          <option value="all">All (including disabled)</option>
+        </select>
+      </label>
+      <input type="search" id="fSearch" placeholder="Filter by policy name, user, group, app…" aria-label="Search policies">
+    </div>
+
+    <section class="tiles" id="tiles" aria-label="Summary"></section>
+
+    <section class="card">
+      <h2>Policy overlap</h2>
+      <p class="card-sub">Pairs of policies that can apply to the same sign-in: their users, target resources and conditions all intersect. Click a cell to compare the two policies; click a policy name to list it below.</p>
+      <div class="actions" style="justify-content:space-between;margin-bottom:10px">
+        <ul class="legend" id="lgMatrix" style="margin:0"></ul>
+        <label class="muted" style="font-size:13px;display:flex;gap:6px;align-items:center">Show
+          <select id="fMatrix">
+            <option value="all">All overlaps</option>
+            <option value="redundant">Likely redundant only</option>
+            <option value="block">Involving a Block policy</option>
+          </select>
+        </label>
+      </div>
+      <div class="matrix-scroll" id="matrix"></div>
+      <div id="pair" class="hidden"></div>
+    </section>
+
+    <div class="grid2">
+      <section class="card">
+        <h2>Most-excluded objects</h2>
+        <p class="card-sub">Users, groups, roles and workload identities excluded from the most policies in view. Click a bar to list those policies.</p>
+        <div class="chart" id="chExcluded"></div>
+        <details class="data"><summary>Show data</summary><div id="tbExcluded"></div></details>
+      </section>
+      <section class="card">
+        <h2>Exclusions per policy</h2>
+        <p class="card-sub">Number of excluded users, groups, roles, guests, workload identities and apps per policy. Click a bar to list that policy.</p>
+        <div class="chart" id="chPerPolicy"></div>
+        <details class="data"><summary>Show data</summary><div id="tbPerPolicy"></div></details>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="table-head">
+        <div>
+          <h2>Inclusions and exclusions by object</h2>
+          <p class="card-sub" id="objSub" style="margin:0"></p>
+        </div>
+        <div class="actions">
+          <label class="muted" style="font-size:13px;display:flex;gap:6px;align-items:center">Show
+            <select id="fObjKind">
+              <option value="identity" selected>Users, groups, roles &amp; workload IDs</option>
+              <option value="resource">Apps &amp; resources</option>
+              <option value="condition">Locations, platforms &amp; other conditions</option>
+              <option value="all">Everything</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="table-scroll"><table><thead><tr id="objHead"></tr></thead><tbody id="objBody"></tbody></table></div>
+      <div class="more" id="objMore"></div>
+    </section>
+
+    <section class="card">
+      <div class="table-head">
+        <div>
+          <h2 id="polTitle">Policies</h2>
+          <p class="card-sub" id="polSub" style="margin:0"></p>
+        </div>
+        <div class="actions"><span id="focusChip"></span><button type="button" id="btnExport">Export overlaps</button></div>
+      </div>
+      <div class="table-scroll"><table><thead><tr id="polHead"></tr></thead><tbody id="polBody"></tbody></table></div>
+    </section>
+
+    <footer>
+      <p>Overlap is worked out from what each policy targets directly. Group and role membership isn't expanded, so two policies targeting different groups that share members aren't shown as overlapping. "Office 365" and "Microsoft Admin Portals" are treated as single targets, as are named locations. Device and application filters aren't evaluated.</p>
+      <p>Overlapping policies aren't necessarily wrong: Entra applies every policy that matches and the user must satisfy all of them. Overlaps with the same controls, or identical scope, are the ones most likely to be redundant.</p>
+    </footer>
+  </main>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const fmtInt = new Intl.NumberFormat();
+
+  const IDENTITY_DIMS = ['Users', 'Groups', 'Roles', 'GuestsOrExternalUsers', 'WorkloadIdentities'];
+  const RESOURCE_DIMS = ['Applications', 'UserActions', 'AuthenticationContext', 'ApplicationFilter'];
+  const COND_DIMS = ['Platforms', 'Locations', 'ClientAppTypes', 'SignInRisk', 'UserRisk', 'ServicePrincipalRisk', 'InsiderRisk', 'AuthenticationFlows'];
+  const OTHER_COND_DIMS = ['DeviceFilter', 'WorkloadIdentityFilter'];
+  const DIM_LABEL = {
+    Users: 'Users', Groups: 'Groups', Roles: 'Directory roles', GuestsOrExternalUsers: 'Guests / external',
+    WorkloadIdentities: 'Workload identities', WorkloadIdentityFilter: 'Workload identity filter',
+    Applications: 'Target resources', UserActions: 'User actions', AuthenticationContext: 'Authentication context',
+    ApplicationFilter: 'App filter', Platforms: 'Device platforms', Locations: 'Locations', ClientAppTypes: 'Client apps',
+    SignInRisk: 'Sign-in risk', UserRisk: 'User risk', ServicePrincipalRisk: 'Service principal risk',
+    InsiderRisk: 'Insider risk', DeviceFilter: 'Device filter', AuthenticationFlows: 'Authentication flows'
+  };
+  const STATE_LABEL = { enabled: 'On', enabledForReportingButNotEnforced: 'Report-only', disabled: 'Off' };
+  const LEVELS = [
+    null,
+    { label: 'Overlap', color: 'var(--lvl-1)' },
+    { label: 'One contains the other, same controls', color: 'var(--lvl-2)' },
+    { label: 'Identical scope', color: 'var(--lvl-3)' },
+  ];
+
+  let POLICIES = [];   // all policies
+  let META = {};
+  let view = [];       // policies in view
+  let pairs = [];      // overlaps in view
+  let pairMap = new Map();
+  let selectedPair = null;
+  let focus = null;    // {kind:'policy'|'object'|'pairs'|..., ...}
+  let polSort = { key: 'name', dir: 1 };
+  let objSort = { key: 'exc', dir: -1 };
+  let expanded = new Set();
+
+  // ---------------------------------------------------------------- CSV ----
+  function parseCsv(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const rows = []; let row = []; let field = ''; let q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; } else field += c; }
+      else if (c === '"') q = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(field); field = ''; rows.push(row); row = []; }
+      else field += c;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    const head = rows.shift() || [];
+    return rows.filter(r => r.length > 1 || r[0]).map(r => { const o = {}; head.forEach((h, i) => o[h.trim()] = (r[i] ?? '').trim()); return o; });
+  }
+  const isTrue = (s) => !/^false$/i.test(s || '');
+
+  // --------------------------------------------------------- policy model --
+  function buildPolicies(rows) {
+    const byId = new Map();
+    for (const r of rows) {
+      if (!byId.has(r.PolicyId)) byId.set(r.PolicyId, {
+        id: r.PolicyId, name: r.PolicyName || '(unnamed)', state: r.State, grantType: r.GrantType || '',
+        grant: r.GrantControls || '', session: r.SessionControls || '', modified: r.ModifiedDateTime || '',
+        dims: {}, rows: []
+      });
+      const p = byId.get(r.PolicyId);
+      if (r.Dimension === 'Policy' || !r.Dimension) continue;
+      const d = p.dims[r.Dimension] || (p.dims[r.Dimension] = { inc: [], exc: [] });
+      const v = { id: r.ValueId || r.ValueName, name: r.ValueName || r.ValueId, type: r.ValueType || '', resolved: isTrue(r.Resolved), dim: r.Dimension };
+      (r.Direction === 'Exclude' ? d.exc : d.inc).push(v);
+      p.rows.push(`${r.Dimension}|${r.Direction}|${v.id}`);
+    }
+    const list = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    list.forEach((p, i) => { p.n = i + 1; model(p); });
+    return list;
+  }
+
+  // Scope = {all, none, inc: Map(token -> name), exc: Set(token)}
+  function scope(entries, excEntries, isAll, tokenOf) {
+    const s = { all: false, none: false, inc: new Map(), exc: new Set() };
+    for (const v of entries) { if (isAll(v.id)) s.all = true; else if (v.id !== 'None') s.inc.set(tokenOf(v), v.name); }
+    for (const v of excEntries) s.exc.add(tokenOf(v));
+    s.none = !s.all && s.inc.size === 0;
+    return s;
+  }
+  function model(p) {
+    const d = (k) => p.dims[k] || { inc: [], exc: [] };
+    const tok = (v) => `${v.dim}:${v.id}`;
+    // Who
+    const W = d('WorkloadIdentities');
+    if (W.inc.length) {
+      p.subjectKind = 'workload';
+      p.subject = scope(W.inc, W.exc, id => id === 'ServicePrincipalsInMyTenant', tok);
+    } else {
+      p.subjectKind = 'users';
+      const inc = [], exc = [];
+      for (const k of ['Users', 'Groups', 'Roles', 'GuestsOrExternalUsers']) { inc.push(...d(k).inc); exc.push(...d(k).exc); }
+      p.subject = scope(inc, exc, id => id === 'All', tok);
+    }
+    // What
+    if (d('UserActions').inc.length) { p.targetKind = 'userActions'; p.target = scope(d('UserActions').inc, [], () => false, tok); }
+    else if (d('AuthenticationContext').inc.length) { p.targetKind = 'authContext'; p.target = scope(d('AuthenticationContext').inc, [], () => false, tok); }
+    else { p.targetKind = 'apps'; p.target = scope(d('Applications').inc, d('Applications').exc, id => id === 'All', tok); }
+    // Conditions (absent = any)
+    p.cond = {};
+    for (const k of COND_DIMS) {
+      const c = d(k);
+      if (!c.inc.length) p.cond[k] = { all: true, none: false, inc: new Map(), exc: new Set(c.exc.map(tok)), unset: true };
+      else p.cond[k] = scope(c.inc, c.exc, id => /^all$/i.test(id), tok);
+    }
+    p.sig = [...p.rows].sort().join('\n');
+    p.excCount = [...IDENTITY_DIMS, 'Applications'].reduce((n, k) => n + d(k).exc.length, 0);
+    p.unresolved = Object.values(p.dims).flatMap(x => [...x.inc, ...x.exc]).filter(v => !v.resolved);
+  }
+
+  // Do two scopes intersect? Returns null, or {both:true} / {shared:[names], via:'A'|'B'|null}
+  function overlapScope(a, b) {
+    if (a.none || b.none) return null;
+    if (a.all && b.all) return { both: true, shared: [] };
+    const pick = (fromInc, allSide) => [...fromInc.keys()].filter(k => !a.exc.has(k) && !b.exc.has(k));
+    if (a.all) { const s = pick(b.inc); return s.length ? { shared: s.map(k => b.inc.get(k)), via: 'A' } : null; }
+    if (b.all) { const s = pick(a.inc); return s.length ? { shared: s.map(k => a.inc.get(k)), via: 'B' } : null; }
+    const s = [...a.inc.keys()].filter(k => b.inc.has(k) && !a.exc.has(k) && !b.exc.has(k));
+    return s.length ? { shared: s.map(k => a.inc.get(k)), via: null } : null;
+  }
+  // Does scope a cover everything scope b targets?
+  function covers(a, b) {
+    if (b.none) return true;
+    if (a.none) return false;
+    if (a.all) return b.all ? [...a.exc].every(x => b.exc.has(x)) : [...b.inc.keys()].every(k => !a.exc.has(k));
+    if (b.all) return false;
+    return [...b.inc.keys()].every(k => a.inc.has(k) && !a.exc.has(k));
+  }
+  function contains(a, b) {
+    return covers(a.subject, b.subject) && covers(a.target, b.target) && COND_DIMS.every(k => covers(a.cond[k], b.cond[k]));
+  }
+  function comparePolicies(a, b) {
+    if (a.subjectKind !== b.subjectKind || a.targetKind !== b.targetKind) return null;
+    const subj = overlapScope(a.subject, b.subject); if (!subj) return null;
+    const targ = overlapScope(a.target, b.target); if (!targ) return null;
+    const conds = {};
+    for (const k of COND_DIMS) {
+      if (a.cond[k].unset && b.cond[k].unset) continue;
+      const o = overlapScope(a.cond[k], b.cond[k]); if (!o) return null;
+      conds[k] = o;
+    }
+    const identical = a.sig === b.sig;
+    const sameControls = a.grant === b.grant && a.session === b.session;
+    const aHasB = contains(a, b), bHasA = contains(b, a);
+    const container = identical ? null : aHasB ? a : bHasA ? b : null;
+    return {
+      a, b, subj, targ, conds, identical, sameControls, container,
+      block: a.grantType === 'Block' || b.grantType === 'Block',
+      level: identical ? 3 : (sameControls && container) ? 2 : 1,
+    };
+  }
+
+  // ------------------------------------------------------------ loading ----
+  function load(text, source) {
+    const rows = parseCsv(text);
+    if (!rows.length || !('PolicyId' in rows[0]) || !('Dimension' in rows[0])) {
+      alert('This does not look like a Get-EntraCAPolicyReport.ps1 CSV (missing PolicyId / Dimension columns).');
+      return;
+    }
+    POLICIES = buildPolicies(rows);
+    const gen = rows[0].ReportGeneratedUtc;
+    META = { source, generated: gen ? gen.slice(0, 10) : '' };
+    focus = null; selectedPair = null; expanded.clear();
+    $('drop').classList.add('hidden'); $('dash').classList.remove('hidden');
+    $('subtitle').textContent = `${source} · ${fmtInt.format(POLICIES.length)} policies${META.generated ? ' · report generated ' + META.generated : ''}`;
+    render();
+  }
+
+  function inView() {
+    const st = $('fState').value;
+    const q = $('fSearch').value.trim().toLowerCase();
+    return POLICIES.filter(p => {
+      if (st === 'enabled' && p.state !== 'enabled') return false;
+      if (st === 'active' && p.state === 'disabled') return false;
+      if (q && !(p.name.toLowerCase().includes(q) || Object.values(p.dims).some(d => [...d.inc, ...d.exc].some(v => v.name.toLowerCase().includes(q))))) return false;
+      return true;
+    });
+  }
+
+  // ------------------------------------------------------------ tooltip ----
+  const tip = $('tip');
+  function showTip(evt, value, label, hint) {
+    tip.replaceChildren();
+    const v = document.createElement('div'); v.className = 'v'; v.textContent = value;
+    const k = document.createElement('div'); k.className = 'k'; k.textContent = label;
+    tip.append(v, k);
+    if (hint) { const h = document.createElement('div'); h.className = 'hint'; h.textContent = hint; tip.append(h); }
+    let x, y;
+    if (evt.type !== 'focus' && evt.clientX != null) { x = evt.clientX; y = evt.clientY; }
+    else { const b = evt.currentTarget.getBoundingClientRect(); x = b.left + b.width / 2; y = b.top; }
+    tip.style.opacity = '1';
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = x + 12, top = y - th - 12;
+    if (left + tw > innerWidth - 8) left = x - tw - 12;
+    if (top < 8) top = y + 16;
+    tip.style.left = Math.max(8, left) + 'px'; tip.style.top = top + 'px';
+  }
+  const hideTip = () => { tip.style.opacity = '0'; };
+  function svgEl(tag, attrs, parent) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.append(e); return e; }
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function clickable(node, fn) {
+    node.setAttribute('tabindex', '0'); node.setAttribute('role', 'button');
+    node.addEventListener('click', fn);
+    node.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } });
+  }
+  function tipOn(node, fn) { node.addEventListener('pointermove', fn); node.addEventListener('focus', fn); node.addEventListener('pointerleave', hideTip); node.addEventListener('blur', hideTip); }
+  function truncate(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+  function hBar(x, y, w, h) { const r = Math.min(4, h / 2, w); return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h - r}Q${x + w},${y + h} ${x + w - r},${y + h}H${x}Z`; }
+
+  // --------------------------------------------------------------- tiles ---
+  function renderTiles() {
+    const t = $('tiles'); t.replaceChildren();
+    const by = (s) => view.filter(p => p.state === s).length;
+    const overlapPolicies = new Set(pairs.flatMap(x => [x.a.id, x.b.id])).size;
+    const same = pairs.filter(x => x.level >= 2).length;
+    const blk = pairs.filter(x => x.block).length;
+    const exclObjs = new Set(view.flatMap(p => IDENTITY_DIMS.flatMap(k => (p.dims[k]?.exc || []).map(v => k + ':' + v.id))));
+    const userPolicies = view.filter(p => p.subjectKind === 'users');
+    const everywhere = [...exclObjs].filter(o => userPolicies.length && userPolicies.every(p => IDENTITY_DIMS.some(k => (p.dims[k]?.exc || []).some(v => k + ':' + v.id === o)))).length;
+    const unres = view.reduce((n, p) => n + p.unresolved.length, 0);
+    const defs = [
+      { hero: true, label: 'Policies in view', value: view.length, meta: `${by('enabled')} on · ${by('enabledForReportingButNotEnforced')} report-only · ${by('disabled')} off` },
+      { label: 'Overlapping pairs', value: pairs.length, meta: `${overlapPolicies} policies involved`, f: { kind: 'pairs', level: 0, label: 'Policies with any overlap' } },
+      { label: 'Likely redundant pairs', value: same, meta: 'identical, or contained with same controls', flag: same > 0, f: { kind: 'pairs', level: 2, label: 'Likely redundant policies' } },
+      { label: 'Overlaps with a Block policy', value: blk, meta: 'Block overrides the other policy', f: { kind: 'pairs', block: true, label: 'Overlaps involving a Block policy' } },
+      { label: 'Excluded identities', value: exclObjs.size, meta: `${everywhere} excluded from every user policy`, f: { kind: 'hasExcl', label: 'Policies with identity exclusions' } },
+      { label: 'Unresolved references', value: unres, meta: 'deleted or unknown objects', flag: unres > 0, f: { kind: 'unresolved', label: 'Policies referencing deleted objects' } },
+    ];
+    for (const d of defs) {
+      const b = el(d.f ? 'button' : 'div', 'tile' + (d.hero ? ' hero' : ''));
+      if (d.f) { b.type = 'button'; b.setAttribute('aria-pressed', focus && focus.label === d.f.label ? 'true' : 'false'); b.addEventListener('click', () => setFocus(d.f)); }
+      const l = el('span', 'label'); if (d.flag) l.append(el('span', 'flagdot')); l.append(document.createTextNode(d.label));
+      b.append(l, el('span', 'value', fmtInt.format(d.value)), el('span', 'meta', d.meta));
+      t.append(b);
+    }
+  }
+
+  // -------------------------------------------------------------- matrix ---
+  function renderMatrix() {
+    const host = $('matrix');
+    const lg = $('lgMatrix'); lg.replaceChildren();
+    LEVELS.slice(1).forEach(L => { const li = el('li'); const sw = el('span', 'sw'); sw.style.background = L.color; li.append(sw, document.createTextNode(L.label)); lg.append(li); });
+    const li = el('li'); li.append(el('span', 'dotkey'), document.createTextNode('One of the pair is a Block policy')); lg.append(li);
+
+    const n = view.length;
+    if (!n) { host.replaceChildren(el('p', 'muted', 'No policies match the filters.')); return; }
+    const avail = Math.max(280, host.clientWidth);
+    const labelW = Math.min(260, Math.max(130, avail * 0.3));
+    const cell = Math.max(12, Math.min(26, Math.floor((avail - labelW - 8) / n)));
+    const top = 26;
+    const W = labelW + n * cell + 4, H = top + n * cell + 4;
+    const maxChars = Math.floor((labelW - 12) / 6.4);
+    const svg = svgEl('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `Overlap matrix of ${n} policies with ${pairs.length} overlapping pairs` });
+    // column numbers
+    view.forEach((p, j) => {
+      if (cell < 16 && (j + 1) % 2 === 0 && n > 20) return;
+      const t = svgEl('text', { x: labelW + j * cell + cell / 2, y: top - 8, 'text-anchor': 'middle', 'font-size': cell < 16 ? 9 : 10, fill: 'var(--muted)', style: 'font-variant-numeric:tabular-nums' }, svg);
+      t.textContent = p.n;
+    });
+    view.forEach((a, i) => {
+      const y = top + i * cell;
+      const g = svgEl('g', { class: 'rowlabel', 'aria-label': `List policy ${a.name}` }, svg);
+      const t = svgEl('text', { x: labelW - 8, y: y + cell / 2 + 4, 'text-anchor': 'end', 'font-size': 12, fill: focus && focus.kind === 'policy' && focus.id === a.id ? 'var(--ink)' : 'var(--ink-2)', 'font-weight': focus && focus.kind === 'policy' && focus.id === a.id ? 600 : 400 }, g);
+      t.textContent = `${a.n}. ${truncate(a.name, Math.max(8, maxChars - String(a.n).length - 2))}`;
+      const tt = svgEl('title', {}, g); tt.textContent = a.name;
+      clickable(g, () => setFocus({ kind: 'policy', id: a.id, label: a.name }));
+      view.forEach((b, j) => {
+        const x = labelW + j * cell;
+        if (i === j) { svgEl('rect', { x: x + 1, y: y + 1, width: cell - 2, height: cell - 2, rx: 2, fill: 'var(--surface-2)' }, svg); return; }
+        let pr = pairMap.get(key(a, b));
+        const mode = $('fMatrix').value;
+        if (pr && ((mode === 'redundant' && pr.level < 2) || (mode === 'block' && !pr.block))) pr = null;
+        if (!pr) { svgEl('rect', { x: x + 1, y: y + 1, width: cell - 2, height: cell - 2, rx: 2, fill: 'none', stroke: 'var(--grid)', 'stroke-width': 1 }, svg); return; }
+        const isSel = selectedPair && key(selectedPair.a, selectedPair.b) === key(a, b);
+        const cg = svgEl('g', { class: 'cell', 'aria-label': `${a.name} and ${b.name}: ${LEVELS[pr.level].label}${pr.block ? ', involves Block' : ''}` }, svg);
+        svgEl('rect', { x: x + 1, y: y + 1, width: cell - 2, height: cell - 2, rx: 2, fill: LEVELS[pr.level].color, stroke: isSel ? 'var(--ink)' : 'none', 'stroke-width': isSel ? 2 : 0 }, cg);
+        if (pr.block && cell >= 14) svgEl('circle', { cx: x + cell / 2, cy: y + cell / 2, r: Math.min(4, cell / 5), fill: 'var(--critical)', stroke: 'var(--surface)', 'stroke-width': 2 }, cg);
+        tipOn(cg, (e) => showTip(e, LEVELS[pr.level].label + (pr.block ? ' · Block' : ''), `${a.n}. ${a.name}  ↔  ${b.n}. ${b.name}`, 'click to compare'));
+        clickable(cg, () => { selectedPair = pr; renderMatrix(); renderPair(); $('pair').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); });
+      });
+    });
+    host.replaceChildren(svg);
+  }
+  const key = (a, b) => a.id < b.id ? a.id + '|' + b.id : b.id + '|' + a.id;
+
+  function describe(o, aName, bName, allLabel) {
+    if (o.both) return `Both target ${allLabel}`;
+    const list = o.shared.slice(0, 6).join(', ') + (o.shared.length > 6 ? ` +${o.shared.length - 6} more` : '');
+    if (o.via === 'A') return `${aName} targets ${allLabel}, which covers ${bName}'s ${list}`;
+    if (o.via === 'B') return `${bName} targets ${allLabel}, which covers ${aName}'s ${list}`;
+    return `Both target ${list}`;
+  }
+  function renderPair() {
+    const box = $('pair');
+    if (!selectedPair) { box.classList.add('hidden'); return; }
+    const pr = selectedPair, a = pr.a, b = pr.b;
+    box.classList.remove('hidden'); box.replaceChildren();
+    const head = el('div', 'pair-head');
+    head.append(el('h3', '', `Compare ${a.n}. ${a.name}  ↔  ${b.n}. ${b.name}`));
+    const close = el('button', '', 'Close'); close.type = 'button';
+    close.addEventListener('click', () => { selectedPair = null; renderMatrix(); renderPair(); });
+    head.append(close); box.append(head);
+    const inner = pr.container ? (pr.container === a ? b : a) : null;
+    let verdict = pr.identical ? 'These policies have identical assignments and conditions. ' :
+      pr.container ? `Everything ${inner.name} applies to is also covered by ${pr.container.name}. ` :
+      'These policies partly overlap. ';
+    const blocker = a.grantType === 'Block' ? a : b.grantType === 'Block' ? b : null;
+    if (pr.sameControls && (pr.identical || pr.container)) verdict += pr.identical ? 'They apply the same controls, so one of them is redundant.' : `They apply the same controls, so ${inner.name} adds nothing and is probably redundant.`;
+    else if (pr.sameControls) verdict += 'They apply the same controls to the overlapping sign-ins; consider whether they could be merged.';
+    else if (blocker && (pr.identical || pr.container === blocker)) verdict += `${blocker.name} blocks every sign-in the other policy applies to, so the other policy never takes effect.`;
+    else if (blocker) verdict += `${blocker.name} blocks access, so for overlapping sign-ins the other policy's controls make no difference.`;
+    else verdict += 'They apply different controls; a matching sign-in must satisfy both.';
+    box.append(el('p', 'verdict', verdict));
+    const why = el('ul', 'why');
+    const who = pr.a.subjectKind === 'workload' ? 'all owned service principals' : 'all users';
+    why.append(el('li', '', 'Who: ' + describe(pr.subj, `#${a.n}`, `#${b.n}`, who)));
+    const what = a.targetKind === 'apps' ? 'all resources' : a.targetKind === 'userActions' ? 'the same user action' : 'the same authentication context';
+    why.append(el('li', '', 'What: ' + describe(pr.targ, `#${a.n}`, `#${b.n}`, what)));
+    for (const k in pr.conds) why.append(el('li', '', `${DIM_LABEL[k]}: ` + describe(pr.conds[k], `#${a.n}`, `#${b.n}`, 'any')));
+    box.append(why);
+
+    const grid = el('div', 'pair-grid');
+    grid.append(el('div', 'h', ''), el('div', 'h', `${a.n}. ${a.name}`), el('div', 'h', `${b.n}. ${b.name}`));
+    const sharedNames = new Set([...pr.subj.shared, ...pr.targ.shared, ...Object.values(pr.conds).flatMap(o => o.shared)]);
+    const row = (label, fa, fb, hl) => {
+      grid.append(el('div', 'dim', label));
+      const ca = el('div', hl ? 'ov' : ''); fa(ca); const cb = el('div', hl ? 'ov' : ''); fb(cb);
+      grid.append(ca, cb);
+    };
+    const vals = (p, dims) => (c) => {
+      const v = el('div', 'vals');
+      let any = false;
+      for (const k of dims) { const d = p.dims[k]; if (!d) continue;
+        d.inc.forEach(x => { any = true; v.append(el('span', 'inc' + (sharedNames.has(x.name) ? ' shared' : '') + (x.resolved ? '' : ' unres'), x.name)); });
+        d.exc.forEach(x => { any = true; v.append(el('span', 'exc' + (x.resolved ? '' : ' unres'), x.name)); }); }
+      if (!any) v.append(el('span', 'muted', dims === COND_DIMS ? 'Any' : '—'));
+      c.append(v);
+    };
+    row('State', c => c.append(stateEl(a.state)), c => c.append(stateEl(b.state)));
+    row('Users / identities', vals(a, IDENTITY_DIMS), vals(b, IDENTITY_DIMS), true);
+    row('Target resources', vals(a, RESOURCE_DIMS), vals(b, RESOURCE_DIMS), true);
+    row('Conditions', vals(a, [...COND_DIMS, ...OTHER_COND_DIMS]), vals(b, [...COND_DIMS, ...OTHER_COND_DIMS]), Object.keys(pr.conds).length > 0);
+    row('Grant', c => c.append(grantEl(a)), c => c.append(grantEl(b)));
+    row('Session', c => c.textContent = a.session || '—', c => c.textContent = b.session || '—');
+    box.append(grid);
+  }
+  function stateEl(s) { return el('span', 'state' + (s === 'enabled' ? ' on' : s === 'disabled' ? '' : ' report'), STATE_LABEL[s] || s); }
+  function grantEl(p) { return el('span', 'grant' + (p.grantType === 'Block' ? ' block' : ''), p.grant || (p.grantType === 'Session only' ? 'Session controls only' : '—')); }
+
+  // ---------------------------------------------------- horizontal bars ---
+  function bars(host, tableHost, items, valueLabel, onClick, isFocused) {
+    if (!items.length) { host.replaceChildren(el('p', 'muted', 'Nothing to show.')); tableHost.replaceChildren(); return; }
+    const W = Math.max(280, host.clientWidth);
+    const labelW = Math.min(220, W * 0.42), barH = 16, gap = 10;
+    const H = items.length * (barH + gap);
+    const plotW = W - labelW - 40;
+    const max = Math.max(1, ...items.map(i => i.value));
+    const maxChars = Math.floor((labelW - 10) / 6.3);
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': items.map(i => `${i.label} ${i.value}`).join(', ') });
+    svgEl('line', { x1: labelW, x2: labelW, y1: 0, y2: H - gap + 2, stroke: 'var(--axis)', 'stroke-width': 1 }, svg);
+    const anyFocus = items.some(isFocused);
+    items.forEach((it, i) => {
+      const y = i * (barH + gap), w = Math.max(2, plotW * it.value / max);
+      const g = svgEl('g', { class: 'hit', 'aria-label': `${it.label}: ${it.value} ${valueLabel}` }, svg);
+      if (anyFocus && !isFocused(it)) g.setAttribute('opacity', '0.4');
+      svgEl('rect', { x: 0, y: y - gap / 2, width: W, height: barH + gap, fill: 'transparent' }, g);
+      const lt = svgEl('text', { x: labelW - 8, y: y + barH / 2 + 4, 'text-anchor': 'end', 'font-size': 12, fill: it.unresolved ? 'var(--critical-text)' : 'var(--ink-2)' }, g);
+      lt.textContent = truncate(it.label, maxChars);
+      svgEl('path', { d: hBar(labelW + 1, y, w, barH), fill: 'var(--series-1)', class: 'mark' }, g);
+      const vt = svgEl('text', { x: labelW + 1 + w + 6, y: y + barH / 2 + 4, 'font-size': 12, 'font-weight': 600, fill: 'var(--ink)' }, g);
+      vt.textContent = fmtInt.format(it.value);
+      tipOn(g, (e) => showTip(e, `${fmtInt.format(it.value)} ${valueLabel}`, it.label + (it.sub ? ` (${it.sub})` : ''), 'click to list'));
+      clickable(g, () => onClick(it));
+    });
+    host.replaceChildren(svg);
+    const t = el('table'); const tr = el('tr'); ['Name', valueLabel].forEach(h => tr.append(el('th', '', h)));
+    const th = el('thead'); th.append(tr); t.append(th); const tb = el('tbody');
+    items.forEach(it => { const r = el('tr'); r.append(el('td', '', it.label), el('td', 'num', fmtInt.format(it.value))); tb.append(r); });
+    t.append(tb); tableHost.replaceChildren(t);
+  }
+
+  // ------------------------------------------------------------ objects ----
+  function objectIndex(kind) {
+    const dims = kind === 'identity' ? IDENTITY_DIMS : kind === 'resource' ? RESOURCE_DIMS : kind === 'condition' ? [...COND_DIMS, ...OTHER_COND_DIMS] : [...IDENTITY_DIMS, ...RESOURCE_DIMS, ...COND_DIMS, ...OTHER_COND_DIMS];
+    const map = new Map();
+    for (const p of view) for (const k of dims) {
+      const d = p.dims[k]; if (!d) continue;
+      for (const [dir, list] of [['inc', d.inc], ['exc', d.exc]]) for (const v of list) {
+        const id = k + ':' + v.id;
+        if (!map.has(id)) map.set(id, { key: id, name: v.name, type: v.type === 'Special' ? 'Built-in' : v.type, dim: k, resolved: v.resolved, inc: [], exc: [] });
+        map.get(id)[dir].push(p);
+      }
+    }
+    return [...map.values()];
+  }
+  function renderObjects() {
+    const objs = objectIndex($('fObjKind').value);
+    const total = view.length;
+    $('objSub').textContent = `${fmtInt.format(objs.length)} objects across ${fmtInt.format(total)} policies in view. Excluded objects are skipped by those policies, so check each one is intended (e.g. break-glass accounts).`;
+    const cols = [
+      { key: 'name', label: 'Object', get: o => o.name.toLowerCase() },
+      { key: 'type', label: 'Type', get: o => o.type },
+      { key: 'inc', label: 'Included in', get: o => o.inc.length },
+      { key: 'exc', label: 'Excluded from', get: o => o.exc.length },
+      { key: 'pols', label: 'Policies', get: o => 0 },
+    ];
+    const head = $('objHead'); head.replaceChildren();
+    cols.forEach(c => {
+      const th = el('th', c.key === 'pols' ? '' : 'sortable', c.label); th.scope = 'col';
+      if (c.key !== 'pols') {
+        th.tabIndex = 0;
+        th.setAttribute('aria-sort', objSort.key === c.key ? (objSort.dir > 0 ? 'ascending' : 'descending') : 'none');
+        if (objSort.key === c.key) th.append(el('span', 'arrow', objSort.dir > 0 ? '▲' : '▼'));
+        const act = () => { objSort = { key: c.key, dir: objSort.key === c.key ? -objSort.dir : (c.key === 'name' || c.key === 'type' ? 1 : -1) }; renderObjects(); };
+        th.addEventListener('click', act); th.addEventListener('keydown', e => { if (e.key === 'Enter') act(); });
+      }
+      head.append(th);
+    });
+    const col = cols.find(c => c.key === objSort.key);
+    objs.sort((a, b) => { const x = col.get(a), y = col.get(b); return (x < y ? -1 : x > y ? 1 : 0) * objSort.dir || b.exc.length - a.exc.length || a.name.localeCompare(b.name); });
+    const body = $('objBody'); body.replaceChildren();
+    const LIMIT = 300;
+    objs.slice(0, LIMIT).forEach(o => {
+      const tr = el('tr', 'clickable' + (focus && focus.kind === 'object' && focus.key === o.key ? ' sel' : ''));
+      const n = el('td', 'name'); n.append(el('span', o.resolved ? '' : 'unres', o.name));
+      if (!o.resolved) { n.append(document.createTextNode(' ')); n.append(el('span', 'tag', 'unresolved')); }
+      tr.append(n, el('td', '', o.type || DIM_LABEL[o.dim]));
+      tr.append(el('td', 'num', o.inc.length ? fmtInt.format(o.inc.length) : '–'));
+      const ex = el('td', 'num' + (o.exc.length ? ' exc' : ''), o.exc.length ? fmtInt.format(o.exc.length) : '–');
+      if (o.exc.length) ex.classList.remove('exc'), ex.style.color = 'var(--excl-text)', ex.style.fontWeight = '600';
+      tr.append(ex);
+      const pl = el('td', 'wide'); const vv = el('div', 'vals');
+      o.inc.slice(0, 4).forEach(p => vv.append(el('span', 'inc', `${p.n}. ${p.name}`)));
+      if (o.inc.length > 4) vv.append(el('span', 'muted', `+${o.inc.length - 4} more included`));
+      o.exc.slice(0, 4).forEach(p => vv.append(el('span', 'exc', `${p.n}. ${p.name}`)));
+      if (o.exc.length > 4) vv.append(el('span', 'muted', `+${o.exc.length - 4} more excluded`));
+      pl.append(vv); tr.append(pl);
+      tr.tabIndex = 0;
+      const act = () => setFocus({ kind: 'object', key: o.key, label: `Policies referencing ${o.name}` });
+      tr.addEventListener('click', act); tr.addEventListener('keydown', e => { if (e.key === 'Enter') act(); });
+      body.append(tr);
+    });
+    if (!objs.length) { const tr = el('tr'); const td = el('td', 'muted', 'No objects.'); td.colSpan = cols.length; tr.append(td); body.append(tr); }
+    $('objMore').textContent = objs.length > LIMIT ? `Showing ${LIMIT} of ${fmtInt.format(objs.length)} — use the search box to narrow down.` : '';
+  }
+
+  function renderBars() {
+    const objs = objectIndex('identity').filter(o => o.exc.length).sort((a, b) => b.exc.length - a.exc.length || a.name.localeCompare(b.name)).slice(0, 12);
+    bars($('chExcluded'), $('tbExcluded'), objs.map(o => ({ label: o.name, sub: o.type, value: o.exc.length, key: o.key, unresolved: !o.resolved })),
+      'policies', it => setFocus({ kind: 'object', key: it.key, label: `Policies referencing ${it.label}` }),
+      it => focus && focus.kind === 'object' && focus.key === it.key);
+    const per = view.filter(p => p.excCount).sort((a, b) => b.excCount - a.excCount || a.n - b.n).slice(0, 12);
+    bars($('chPerPolicy'), $('tbPerPolicy'), per.map(p => ({ label: `${p.n}. ${p.name}`, value: p.excCount, id: p.id, name: p.name })),
+      'exclusions', it => setFocus({ kind: 'policy', id: it.id, label: it.name }),
+      it => focus && focus.kind === 'policy' && focus.id === it.id);
+  }
+
+  // ------------------------------------------------------- policy table ----
+  function focusFilter(p) {
+    if (!focus) return true;
+    switch (focus.kind) {
+      case 'policy': return p.id === focus.id;
+      case 'object': { const [dim, ...rest] = focus.key.split(':'); const id = rest.join(':'); const d = p.dims[dim]; return !!d && [...d.inc, ...d.exc].some(v => v.id === id); }
+      case 'pairs': return pairs.some(x => (x.a === p || x.b === p) && (focus.block ? x.block : x.level >= focus.level));
+      case 'hasExcl': return IDENTITY_DIMS.some(k => p.dims[k]?.exc.length);
+      case 'unresolved': return p.unresolved.length > 0;
+    }
+    return true;
+  }
+  function setFocus(f) {
+    const same = focus && f && JSON.stringify(focus) === JSON.stringify(f);
+    focus = same ? null : f;
+    render(false);
+    if (focus) $('polTitle').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function overlapsOf(p) { return pairs.filter(x => x.a === p || x.b === p); }
+
+  function renderPolicies() {
+    const list = view.filter(focusFilter);
+    $('polTitle').textContent = focus ? focus.label : 'Policies';
+    $('polSub').textContent = `${fmtInt.format(list.length)} of ${fmtInt.format(view.length)} policies in view · click a row for full details`;
+    const chip = $('focusChip'); chip.replaceChildren();
+    if (focus) {
+      const c = el('span', 'focus-chip'); c.append(el('span', '', focus.label));
+      const x = el('button', '', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Clear selection'); x.addEventListener('click', () => setFocus(null));
+      c.append(x); chip.append(c);
+    }
+    const cols = [
+      { key: 'n', label: '#', get: p => p.n },
+      { key: 'name', label: 'Policy', get: p => p.name.toLowerCase() },
+      { key: 'state', label: 'State', get: p => p.state },
+      { key: 'who', label: 'Users / identities', get: p => 0 },
+      { key: 'what', label: 'Target resources', get: p => 0 },
+      { key: 'cond', label: 'Conditions', get: p => 0 },
+      { key: 'grant', label: 'Grant', get: p => p.grant },
+      { key: 'exc', label: 'Exclusions', get: p => p.excCount },
+      { key: 'ov', label: 'Overlaps', get: p => overlapsOf(p).length },
+    ];
+    const head = $('polHead'); head.replaceChildren();
+    cols.forEach(c => {
+      const sortable = !['who', 'what', 'cond'].includes(c.key);
+      const th = el('th', sortable ? 'sortable' : '', c.label); th.scope = 'col';
+      if (sortable) {
+        th.tabIndex = 0;
+        th.setAttribute('aria-sort', polSort.key === c.key ? (polSort.dir > 0 ? 'ascending' : 'descending') : 'none');
+        if (polSort.key === c.key) th.append(el('span', 'arrow', polSort.dir > 0 ? '▲' : '▼'));
+        const act = () => { polSort = { key: c.key, dir: polSort.key === c.key ? -polSort.dir : (['exc', 'ov'].includes(c.key) ? -1 : 1) }; renderPolicies(); };
+        th.addEventListener('click', act); th.addEventListener('keydown', e => { if (e.key === 'Enter') act(); });
+      }
+      head.append(th);
+    });
+    const col = cols.find(c => c.key === polSort.key);
+    list.sort((a, b) => { const x = col.get(a), y = col.get(b); return (x < y ? -1 : x > y ? 1 : 0) * polSort.dir || a.n - b.n; });
+    const body = $('polBody'); body.replaceChildren();
+    const summary = (p, dims, emptyText) => {
+      const td = el('td', 'wide'); const v = el('div', 'vals'); let n = 0;
+      for (const k of dims) { const d = p.dims[k]; if (!d) continue;
+        for (const x of d.inc) { if (n++ < 4) v.append(el('span', 'inc' + (x.resolved ? '' : ' unres'), x.name)); }
+        for (const x of d.exc) { if (n++ < 7) v.append(el('span', 'exc' + (x.resolved ? '' : ' unres'), x.name)); } }
+      if (n > 7) v.append(el('span', 'muted', `+${n - 7} more`));
+      if (!n) v.append(el('span', 'muted', emptyText));
+      td.append(v); return td;
+    };
+    for (const p of list) {
+      const tr = el('tr', 'clickable'); tr.tabIndex = 0;
+      tr.append(el('td', 'num', p.n), el('td', 'name', p.name));
+      const st = el('td'); st.append(stateEl(p.state)); tr.append(st);
+      tr.append(summary(p, IDENTITY_DIMS, '—'), summary(p, RESOURCE_DIMS, '—'), summary(p, [...COND_DIMS, ...OTHER_COND_DIMS], 'Any'));
+      const g = el("td", "mid"); g.append(grantEl(p)); if (p.session) g.append(el('div', 'muted', p.session)); tr.append(g);
+      tr.append(el('td', 'num', p.excCount || '–'));
+      const ovs = overlapsOf(p);
+      tr.append(el('td', 'num', ovs.length || '–'));
+      const toggle = () => { expanded.has(p.id) ? expanded.delete(p.id) : expanded.add(p.id); renderPolicies(); };
+      tr.addEventListener('click', toggle); tr.addEventListener('keydown', e => { if (e.key === 'Enter') toggle(); });
+      tr.setAttribute('aria-expanded', expanded.has(p.id) ? 'true' : 'false');
+      body.append(tr);
+      if (expanded.has(p.id)) body.append(detailRow(p, ovs, cols.length));
+    }
+    if (!list.length) { const tr = el('tr'); const td = el('td', 'muted', 'No policies match.'); td.colSpan = cols.length; tr.append(td); body.append(tr); }
+  }
+  function detailRow(p, ovs, span) {
+    const tr = el('tr', 'detail'); const td = el('td'); td.colSpan = span;
+    const grid = el('div', 'detail-grid');
+    const dims = [...IDENTITY_DIMS, ...RESOURCE_DIMS, ...COND_DIMS, ...OTHER_COND_DIMS].filter(k => p.dims[k]);
+    for (const k of dims) {
+      const box = el('div'); box.append(el('h3', '', DIM_LABEL[k] || k));
+      const v = el('div', 'vals');
+      p.dims[k].inc.forEach(x => v.append(el('span', 'inc' + (x.resolved ? '' : ' unres'), x.name)));
+      p.dims[k].exc.forEach(x => v.append(el('span', 'exc' + (x.resolved ? '' : ' unres'), x.name)));
+      box.append(v); grid.append(box);
+    }
+    const ob = el('div'); ob.append(el('h3', '', `Overlaps (${ovs.length})`));
+    const ov = el('div', 'vals');
+    ovs.forEach(x => {
+      const other = x.a === p ? x.b : x.a;
+      const b = el('button', '', `${other.n}. ${other.name} — ${LEVELS[x.level].label}${x.block ? ', Block' : ''}`);
+      b.type = 'button'; b.style.cssText = 'text-align:left;padding:2px 8px;font-size:12px';
+      b.addEventListener('click', (e) => { e.stopPropagation(); selectedPair = x; renderMatrix(); renderPair(); $('pair').scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+      ov.append(b);
+    });
+    if (!ovs.length) ov.append(el('span', 'muted', 'None'));
+    ob.append(ov); grid.append(ob);
+    const meta = el('div'); meta.append(el('h3', '', 'Policy ID'));
+    meta.append(el('div', 'muted', p.id)); if (p.modified) meta.append(el('div', 'muted', 'Modified ' + p.modified.slice(0, 10)));
+    grid.append(meta);
+    td.append(grid); tr.append(td); return tr;
+  }
+
+  // ------------------------------------------------------------- render ----
+  function renderBanners() {
+    const b = $('banners'); b.replaceChildren();
+    const unres = view.reduce((n, p) => n + p.unresolved.length, 0);
+    if (unres) {
+      const d = el('div', 'banner'); d.append(el('span', 'ico', '!'));
+      d.append(el('div', '', `${unres} reference(s) in policies in view point to objects that no longer exist or couldn't be resolved (shown in red). Remove them from the policies to avoid surprises if the IDs are ever reused or restored.`));
+      b.append(d);
+    }
+  }
+  function render(recalc = true) {
+    if (!POLICIES.length) return;
+    hideTip();
+    if (recalc) {
+      view = inView();
+      pairs = []; pairMap = new Map();
+      for (let i = 0; i < view.length; i++) for (let j = i + 1; j < view.length; j++) {
+        const pr = comparePolicies(view[i], view[j]);
+        if (pr) { pairs.push(pr); pairMap.set(key(view[i], view[j]), pr); }
+      }
+      if (selectedPair && !pairMap.has(key(selectedPair.a, selectedPair.b))) selectedPair = null;
+    }
+    renderBanners(); renderTiles(); renderMatrix(); renderPair(); renderBars(); renderObjects(); renderPolicies();
+  }
+
+  // ------------------------------------------------------------- export ----
+  function exportPairs() {
+    const esc = (v) => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    const lines = [['PolicyA', 'StateA', 'GrantA', 'PolicyB', 'StateB', 'GrantB', 'Overlap', 'ContainedPolicy', 'InvolvesBlock', 'SharedUsers', 'SharedResources'].join(',')];
+    pairs.forEach(x => lines.push([x.a.name, x.a.state, x.a.grant, x.b.name, x.b.state, x.b.grant, LEVELS[x.level].label,
+      x.container ? (x.container === x.a ? x.b.name : x.a.name) : '', x.block ? 'True' : 'False',
+      x.subj.both ? 'All' : x.subj.shared.join('; '), x.targ.both ? 'All' : x.targ.shared.join('; ')].map(v => esc(String(v ?? ''))).join(',')));
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'ca-policy-overlaps.csv'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ------------------------------------------------------------- sample ----
+  function sampleCsv() {
+    const head = ['PolicyId', 'PolicyName', 'State', 'GrantType', 'GrantControls', 'SessionControls', 'CreatedDateTime', 'ModifiedDateTime', 'Dimension', 'Direction', 'ValueId', 'ValueName', 'ValueType', 'Resolved', 'ReportGeneratedUtc'];
+    const O = {
+      allUsers: ['Users', 'All', 'All users', 'Special'], none: ['Users', 'None', 'None', 'Special'],
+      guests: ['Users', 'GuestsOrExternalUsers', 'All guests and external users', 'Special'],
+      bg1: ['Users', 'u-bg1', 'Break Glass 1 <bg1@contoso.com>', 'User'], bg2: ['Users', 'u-bg2', 'Break Glass 2 <bg2@contoso.com>', 'User'],
+      sync: ['Users', 'u-sync', 'On-Premises Directory Synchronization Service Account', 'User'],
+      svc: ['Users', 'u-svc', 'svc-scanner <svc-scanner@contoso.com>', 'User'],
+      exGroup: ['Groups', 'g-ex', 'CA - Excluded Users', 'Group'], admins: ['Groups', 'g-adm', 'PIM - Tier 0 Admins', 'Group'],
+      pilot: ['Groups', 'g-pilot', 'CA Pilot Users', 'Group'], kiosk: ['Groups', 'g-kiosk', 'Shared Kiosk Accounts', 'Group'],
+      contractors: ['Groups', 'g-con', 'Contractors', 'Group'], travel: ['Groups', 'g-trv', 'Travel Exception - Temp', 'Group'],
+      deleted: ['Groups', 'g-del', 'Unknown or deleted (6f1c2a9e-0b7d-4e55-9a51-2d1e3f8a0c11)', 'Group', false],
+      ga: ['Roles', 'r-ga', 'Global Administrator', 'Directory role'], sa: ['Roles', 'r-sa', 'Security Administrator', 'Directory role'],
+      ea: ['Roles', 'r-ea', 'Exchange Administrator', 'Directory role'], ca: ['Roles', 'r-ca', 'Conditional Access Administrator', 'Directory role'],
+      guestTypes: ['GuestsOrExternalUsers', 'b2bCollaborationGuest,b2bCollaborationMember', 'Guests: b2bCollaborationGuest, b2bCollaborationMember (all external tenants)', 'Guests or external users'],
+      allApps: ['Applications', 'All', 'All resources (cloud apps)', 'Special'], o365: ['Applications', 'Office365', 'Office 365', 'Special'],
+      admin: ['Applications', 'MicrosoftAdminPortals', 'Microsoft Admin Portals', 'Special'],
+      azure: ['Applications', '797f4846-ba00-4fd7-ba43-dac1f8f63013', 'Windows Azure Service Management API', 'Application'],
+      intune: ['Applications', '0000000a-0000-0000-c000-000000000000', 'Microsoft Intune', 'Application'],
+      spo: ['Applications', '00000003-0000-0ff1-ce00-000000000000', 'Office 365 SharePoint Online', 'Application'],
+      salesforce: ['Applications', 'a-sf', 'Salesforce', 'Application'],
+      oldApp: ['Applications', 'a-old', 'App 3c9e1b2a-55d1-4f0e-8c2b-77a9e3d4f601 (no service principal in tenant)', 'Application', false],
+      regSec: ['UserActions', 'urn:user:registersecurityinfo', 'Register security information', 'User action'],
+      anyLoc: ['Locations', 'All', 'Any location', 'Special'], trusted: ['Locations', 'AllTrusted', 'All trusted locations', 'Special'],
+      hq: ['Locations', 'l-hq', 'HQ Office', 'IP range location'], blocked: ['Locations', 'l-bc', 'Blocked countries', 'Country location'],
+      allPlat: ['Platforms', 'all', 'Any platform', 'Platform'], ios: ['Platforms', 'iOS', 'iOS', 'Platform'], android: ['Platforms', 'android', 'android', 'Platform'],
+      windows: ['Platforms', 'windows', 'windows', 'Platform'], macOS: ['Platforms', 'macOS', 'macOS', 'Platform'],
+      eas: ['ClientAppTypes', 'exchangeActiveSync', 'exchangeActiveSync', 'Client app type'], other: ['ClientAppTypes', 'other', 'other', 'Client app type'],
+      browser: ['ClientAppTypes', 'browser', 'browser', 'Client app type'], modern: ['ClientAppTypes', 'mobileAppsAndDesktopClients', 'mobileAppsAndDesktopClients', 'Client app type'],
+      srHigh: ['SignInRisk', 'high', 'high', 'Risk level'], srMed: ['SignInRisk', 'medium', 'medium', 'Risk level'], urHigh: ['UserRisk', 'high', 'high', 'Risk level'],
+      allSp: ['WorkloadIdentities', 'ServicePrincipalsInMyTenant', 'All owned service principals', 'Special'],
+      backupSp: ['WorkloadIdentities', 'sp-bk', 'Backup Service', 'Service principal'],
+      dcf: ['AuthenticationFlows', 'deviceCodeFlow', 'deviceCodeFlow', 'Authentication flow'],
+    };
+    const BREAK = { exc: ['bg1', 'bg2'] };
+    const P = [
+      ['CA001 - Require MFA for all users', 'enabled', 'Grant', 'Require MFA', '', { inc: ['allUsers', 'allApps'], exc: ['bg1', 'bg2', 'exGroup', 'sync', 'deleted'] }],
+      ['CA002 - Block legacy authentication', 'enabled', 'Block', 'Block access', '', { inc: ['allUsers', 'allApps', 'eas', 'other'], exc: ['bg1', 'bg2', 'svc'] }],
+      ['CA003 - Require phishing-resistant MFA for admins', 'enabled', 'Grant', 'Require authentication strength: Phishing-resistant MFA', 'Sign-in frequency: 4 hours', { inc: ['ga', 'sa', 'ea', 'ca', 'allApps'], exc: ['bg1', 'bg2'] }],
+      ['CA004 - Require MFA for Azure management', 'enabled', 'Grant', 'Require MFA', '', { inc: ['allUsers', 'azure'], exc: ['bg1', 'bg2'] }],
+      ['CA005 - Require MFA for guests', 'enabled', 'Grant', 'Require MFA', '', { inc: ['guestTypes', 'allApps'], exc: [] }],
+      ['CA006 - Block access from blocked countries', 'enabled', 'Block', 'Block access', '', { inc: ['allUsers', 'allApps', 'blocked'], exc: ['bg1', 'bg2', 'travel'] }],
+      ['CA007 - Require compliant device for Windows/macOS', 'enabledForReportingButNotEnforced', 'Grant', 'Require compliant device OR Require hybrid joined device', '', { inc: ['allUsers', 'o365', 'windows', 'macOS'], exc: ['bg1', 'bg2', 'kiosk', 'contractors', 'exGroup'] }],
+      ['CA008 - Require app protection on mobile', 'enabled', 'Grant', 'Require app protection policy', '', { inc: ['allUsers', 'o365', 'ios', 'android'], exc: ['bg1', 'bg2', 'exGroup'] }],
+      ['CA009 - Block high sign-in risk', 'enabled', 'Block', 'Block access', '', { inc: ['allUsers', 'allApps', 'srHigh'], exc: ['bg1', 'bg2'] }],
+      ['CA010 - Require password change for high user risk', 'enabled', 'Grant', 'Require MFA AND Require password change', 'Sign-in frequency: every time', { inc: ['allUsers', 'allApps', 'urHigh'], exc: ['bg1', 'bg2', 'sync'] }],
+      ['CA011 - Secure security info registration', 'enabled', 'Grant', 'Require MFA', '', { inc: ['allUsers', 'regSec', 'anyLoc'], exc: ['guests', 'trusted', 'bg1', 'bg2'] }],
+      ['CA012 - MFA for admin portals', 'enabled', 'Grant', 'Require MFA', '', { inc: ['allUsers', 'admin'], exc: ['bg1', 'bg2'] }],
+      ['CA013 - Require MFA for all users (copy)', 'enabledForReportingButNotEnforced', 'Grant', 'Require MFA', '', { inc: ['allUsers', 'allApps'], exc: ['bg1', 'bg2', 'exGroup', 'sync', 'deleted'] }],
+      ['CA014 - Session limits for unmanaged browsers', 'enabled', 'Session only', '', 'App enforced restrictions; Persistent browser: never', { inc: ['allUsers', 'spo', 'browser'], exc: ['bg1', 'bg2', 'pilot'] }],
+      ['CA015 - Pilot: block downloads in Salesforce', 'disabled', 'Session only', '', 'Conditional Access App Control (blockDownloads)', { inc: ['pilot', 'salesforce'], exc: [] }],
+      ['CA016 - Block workload identities outside HQ', 'enabled', 'Block', 'Block access', '', { inc: ['allSp', 'allApps', 'anyLoc'], exc: ['backupSp', 'hq'] }],
+      ['CA017 - Block device code flow', 'enabled', 'Block', 'Block access', '', { inc: ['allUsers', 'allApps', 'dcf'], exc: ['bg1', 'bg2', 'kiosk'] }],
+      ['CA018 - Contractors MFA every session', 'enabled', 'Grant', 'Require MFA', 'Sign-in frequency: every time', { inc: ['contractors', 'allApps'], exc: ['oldApp'] }],
+      ['CA019 - Intune enrollment MFA', 'enabled', 'Grant', 'Require MFA', '', { inc: ['allUsers', 'intune'], exc: ['bg1', 'bg2'] }],
+      ['CA020 - Old risk policy (do not use)', 'disabled', 'Grant', 'Require MFA', '', { inc: ['allUsers', 'allApps', 'srHigh', 'srMed'], exc: ['exGroup'] }],
+    ];
+    const rows = [];
+    const now = '2026-11-06T09:00:00Z';
+    P.forEach(([name, state, gt, grant, session, sc], i) => {
+      const id = `pol-${String(i + 1).padStart(3, '0')}`;
+      const base = [id, name, state, gt, grant, session, '2024-03-01T10:00:00Z', `2026-0${1 + (i % 9)}-1${i % 9}T10:00:00Z`];
+      rows.push([...base, 'Policy', '', id, name, 'Policy', 'True', now]);
+      const add = (k, dir) => { const o = O[k]; rows.push([...base, o[0], dir, o[1], o[2], o[3], o[4] === false ? 'False' : 'True', now]); };
+      sc.inc.forEach(k => add(k, 'Include')); sc.exc.forEach(k => add(k, 'Exclude'));
+    });
+    const esc = (v) => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    return [head, ...rows].map(r => r.map(v => esc(String(v))).join(',')).join('\r\n');
+  }
+
+  // ------------------------------------------------------------- wiring ----
+  function readFile(f) { if (!f) return; const rd = new FileReader(); rd.onload = () => load(String(rd.result), f.name); rd.readAsText(f); }
+  $('btnLoad').addEventListener('click', () => $('file').click());
+  $('file').addEventListener('change', e => { readFile(e.target.files[0]); e.target.value = ''; });
+  $('btnSample').addEventListener('click', () => load(sampleCsv(), 'Sample data'));
+  $('btnExport').addEventListener('click', exportPairs);
+  $('fState').addEventListener('change', () => render());
+  $('fObjKind').addEventListener('change', () => renderObjects());
+  $('fMatrix').addEventListener('change', () => renderMatrix());
+  let st; $('fSearch').addEventListener('input', () => { clearTimeout(st); st = setTimeout(() => render(), 150); });
+  ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement) $('drop').classList.remove('over'); }));
+  document.addEventListener('drop', e => readFile(e.dataTransfer.files[0]));
+  let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (POLICIES.length) { renderMatrix(); renderBars(); } }, 120); });
+})();
+</script>
+</body>
+</html>
