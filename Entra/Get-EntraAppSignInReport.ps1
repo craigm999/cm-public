@@ -21,6 +21,13 @@
     Sign-in activity is keyed by appId, so an app registration is reported with the
     sign-in activity of its service principal in this tenant.
 
+    Each owner's account status is also checked (via Graph JSON batching) so that
+    apps whose owners are disabled can be identified (DisabledOwnerCount,
+    DisabledOwners and AllOwnersDisabled columns).
+
+    When exported to CSV, dates are written as ISO 8601 UTC. The CSV can be loaded
+    into AppSignInDashboard.html (in the same folder) to visualise it.
+
     REQUIREMENTS
       * Microsoft.Graph.Authentication module
           Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
@@ -136,14 +143,16 @@ function Format-Owner {
     switch ($odataType) {
         '#microsoft.graph.user' {
             $upn = Get-Prop $Owner 'userPrincipalName'
-            if ($upn) { return "$name <$upn>" } else { return "$name" }
+            $label = if ($upn) { "$name <$upn>" } else { "$name" }
         }
-        '#microsoft.graph.servicePrincipal' { return "$name (service principal)" }
-        default {
-            if ($name) { return "$name" }
-            return [string](Get-Prop $Owner 'id')
-        }
+        '#microsoft.graph.servicePrincipal' { $label = "$name (service principal)" }
+        default { $label = if ($name) { "$name" } else { [string](Get-Prop $Owner 'id') } }
     }
+    $id = [string](Get-Prop $Owner 'id')
+    if ($script:OwnerEnabled -and $script:OwnerEnabled.ContainsKey($id) -and -not $script:OwnerEnabled[$id]) {
+        $label += ' [disabled]'
+    }
+    return $label
 }
 
 function Get-Owners {
@@ -242,14 +251,75 @@ catch {
 
 #endregion
 
+$pending = [System.Collections.Generic.List[object]]::new()
 $results = [System.Collections.Generic.List[object]]::new()
 $now = [datetime]::UtcNow
+$script:OwnerEnabled = @{}
+
+function Resolve-OwnerAccountStatus {
+    <#
+        Looks up accountEnabled for every distinct owner (users and service principals)
+        using Graph JSON batching (20 requests per batch). Results go in $script:OwnerEnabled.
+    #>
+    param([object[]]$OwnerObjects)
+
+    $todo = @{}
+    foreach ($o in $OwnerObjects) {
+        $id = [string](Get-Prop $o 'id')
+        if (-not $id -or $todo.ContainsKey($id) -or $script:OwnerEnabled.ContainsKey($id)) { continue }
+        $enabled = Get-Prop $o 'accountEnabled'
+        if ($null -ne $enabled) { $script:OwnerEnabled[$id] = [bool]$enabled; continue }
+        $collection = switch (Get-Prop $o '@odata.type') {
+            '#microsoft.graph.user'             { 'users' }
+            '#microsoft.graph.servicePrincipal' { 'servicePrincipals' }
+            default                             { $null }
+        }
+        if ($collection) { $todo[$id] = $collection }
+    }
+    if ($todo.Count -eq 0) { return }
+
+    Write-Host "Checking account status of $($todo.Count) owner(s)..." -ForegroundColor Cyan
+    $ids = @($todo.Keys)
+    for ($i = 0; $i -lt $ids.Count; $i += 20) {
+        $chunk = $ids[$i..([math]::Min($i + 19, $ids.Count - 1))]
+        $attempt = 0
+        while ($chunk.Count -gt 0 -and $attempt -lt 5) {
+            $attempt++
+            $requests = @(foreach ($id in $chunk) {
+                @{ id = $id; method = 'GET'; url = "/$($todo[$id])/$($id)?`$select=id,accountEnabled" }
+            })
+            $body = @{ requests = $requests } | ConvertTo-Json -Depth 5
+            $resp = Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/$batch' `
+                        -Body $body -ContentType 'application/json' -OutputType Hashtable
+            $retry = @()
+            $wait = 0
+            foreach ($r in $resp['responses']) {
+                $status = [int]$r['status']
+                if ($status -eq 200) {
+                    $script:OwnerEnabled[[string]$r['id']] = [bool](Get-Prop $r['body'] 'accountEnabled')
+                }
+                elseif ($status -eq 429 -or $status -ge 500) {
+                    $retry += [string]$r['id']
+                    $ra = Get-Prop (Get-Prop $r 'headers') 'Retry-After'
+                    $wait = [math]::Max($wait, $(if ($ra) { [int]$ra } else { 5 }))
+                }
+                else {
+                    Write-Verbose "Owner $($r['id']) status lookup returned HTTP $status"
+                }
+            }
+            $chunk = $retry
+            if ($chunk.Count -gt 0) { Start-Sleep -Seconds $wait }
+        }
+    }
+}
 
 function New-ResultRow {
     param(
         [string]$ObjectType, $Object, [string]$AppId, [object[]]$Owners, [System.Collections.IDictionary]$Extra
     )
     $signIn = Get-SignInSummary -AppId $AppId
+    $disabledOwners = @($Owners | Where-Object { $script:OwnerEnabled[[string](Get-Prop $_ 'id')] -eq $false })
+    $enabledOwners  = @($Owners | Where-Object { $script:OwnerEnabled[[string](Get-Prop $_ 'id')] -eq $true })
     $row = [ordered]@{
         ObjectType          = $ObjectType
         DisplayName         = Get-Prop $Object 'displayName'
@@ -261,6 +331,10 @@ function New-ResultRow {
         DaysSinceLastSignIn = if ($signIn.LastSignIn) { [int][math]::Floor(($now - $signIn.LastSignIn).TotalDays) } else { $null }
         OwnerCount          = $Owners.Count
         Owners              = ($Owners | ForEach-Object { Format-Owner $_ }) -join '; '
+        EnabledOwnerCount   = $enabledOwners.Count
+        DisabledOwnerCount  = $disabledOwners.Count
+        DisabledOwners      = ($disabledOwners | ForEach-Object { Format-Owner $_ }) -join '; '
+        AllOwnersDisabled   = ($Owners.Count -gt 0 -and $disabledOwners.Count -eq $Owners.Count)
     }
     foreach ($k in $Extra.Keys) { $row[$k] = $Extra[$k] }
     $row.LastDelegatedClientSignIn   = $signIn.LastDelegatedClientSignIn
@@ -282,12 +356,12 @@ if ($Type -in 'All', 'AppRegistrations') {
         $count++
         Write-Progress -Activity 'App registrations' -Status "$count - $(Get-Prop $app 'displayName')"
         $owners = Get-Owners -Object $app -Collection 'applications'
-        $results.Add((New-ResultRow -ObjectType 'AppRegistration' -Object $app -AppId (Get-Prop $app 'appId') -Owners $owners -Extra ([ordered]@{
+        $pending.Add(@{ ObjectType = 'AppRegistration'; Object = $app; AppId = (Get-Prop $app 'appId'); Owners = $owners; Extra = ([ordered]@{
             ServicePrincipalType = $null
             AccountEnabled       = $null
             SignInAudience       = Get-Prop $app 'signInAudience'
             PublisherTenantId    = $context.TenantId
-        })))
+        }) })
     }
     Write-Progress -Activity 'App registrations' -Completed
     Write-Host "  $count app registrations found."
@@ -313,12 +387,12 @@ if ($Type -in 'All', 'EnterpriseApps') {
         $count++
         Write-Progress -Activity 'Enterprise applications' -Status "$count - $(Get-Prop $sp 'displayName')"
         $owners = Get-Owners -Object $sp -Collection 'servicePrincipals'
-        $results.Add((New-ResultRow -ObjectType 'EnterpriseApp' -Object $sp -AppId (Get-Prop $sp 'appId') -Owners $owners -Extra ([ordered]@{
+        $pending.Add(@{ ObjectType = 'EnterpriseApp'; Object = $sp; AppId = (Get-Prop $sp 'appId'); Owners = $owners; Extra = ([ordered]@{
             ServicePrincipalType = $spType
             AccountEnabled       = Get-Prop $sp 'accountEnabled'
             SignInAudience       = Get-Prop $sp 'signInAudience'
             PublisherTenantId    = $ownerOrg
-        })))
+        }) })
     }
     Write-Progress -Activity 'Enterprise applications' -Completed
     Write-Host "  $count enterprise applications found ($skipped excluded - use -IncludeMicrosoftApps / -IncludeManagedIdentities to include)."
@@ -326,12 +400,28 @@ if ($Type -in 'All', 'EnterpriseApps') {
 
 #endregion
 
-#region Output ----------------------------------------------------------------
+#region Owner account status and output ----------------------------------------
+
+Resolve-OwnerAccountStatus -OwnerObjects @($pending | ForEach-Object { $_.Owners })
+
+foreach ($p in $pending) {
+    $results.Add((New-ResultRow -ObjectType $p.ObjectType -Object $p.Object -AppId $p.AppId -Owners $p.Owners -Extra $p.Extra))
+}
 
 $results = $results | Sort-Object ObjectType, DisplayName
 
 if ($OutputPath) {
-    $results | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
+    # Write dates as ISO 8601 UTC so the CSV is unambiguous whatever the locale
+    # (the dashboard in this folder relies on that).
+    $reportTime = $now.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $results | ForEach-Object {
+        $copy = [ordered]@{}
+        foreach ($prop in $_.PSObject.Properties) {
+            $copy[$prop.Name] = if ($prop.Value -is [datetime]) { $prop.Value.ToString('yyyy-MM-ddTHH:mm:ssZ') } else { $prop.Value }
+        }
+        $copy.ReportGeneratedUtc = $reportTime
+        [pscustomobject]$copy
+    } | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
     Write-Host "Report exported to $((Resolve-Path $OutputPath).Path)" -ForegroundColor Green
 }
 

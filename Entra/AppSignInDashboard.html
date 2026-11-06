@@ -1,0 +1,904 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entra App Hygiene</title>
+<!--
+  Dashboard for the CSV produced by Get-EntraAppSignInReport.ps1.
+  Fully self-contained: no network requests, the CSV is read locally in the browser.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --surface-2: #f3f2ee;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+    --critical-text: #b42f2f;
+    --accent-wash: rgba(42,120,214,0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --surface-2: #232321;
+      --ink: #f0efec;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --critical-text: #e66767;
+      --accent-wash: rgba(57,135,229,0.16);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #232321;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --critical-text: #e66767;
+    --accent-wash: rgba(57,135,229,0.16);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--ink-2); margin: 0; }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .card-sub { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; }
+
+  button, select, input[type=search] {
+    font: inherit; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px;
+  }
+  button { cursor: pointer; }
+  button:hover { background: var(--surface-2); }
+  button.primary { background: var(--series-1); color: #fff; border-color: transparent; }
+  button.primary:hover { filter: brightness(1.08); }
+  button:focus-visible, select:focus-visible, input:focus-visible, .tile:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--series-1); outline-offset: 2px;
+  }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+
+  /* Empty / drop state */
+  #drop {
+    border: 1.5px dashed var(--axis); border-radius: 12px; padding: 48px 16px; text-align: center;
+    background: var(--surface); color: var(--ink-2);
+  }
+  #drop.over { border-color: var(--series-1); background: var(--accent-wash); }
+  #drop strong { color: var(--ink); display: block; font-size: 16px; margin-bottom: 6px; }
+  #drop code { background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
+
+  .banner { border-radius: 8px; padding: 10px 12px; margin-bottom: 16px; background: var(--surface); border: 1px solid var(--border); display: flex; gap: 10px; align-items: flex-start; }
+  .banner .ico { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--warning); color: #0b0b0b; font-weight: 700; font-size: 12px; display: grid; place-items: center; margin-top: 1px; }
+
+  /* Filter row */
+  .filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 16px; }
+  .filters label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .filters input[type=search] { min-width: 220px; flex: 1 1 220px; max-width: 360px; }
+
+  /* Tiles */
+  .tiles { display: grid; grid-template-columns: minmax(200px, 1.2fr) repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
+  .tile:hover { background: var(--surface-2); }
+  .tile[aria-pressed="true"] { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); background: var(--accent-wash); }
+  .tile .label { color: var(--ink-2); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .tile .value { font-size: 30px; font-weight: 600; line-height: 1.15; }
+  .tile .meta { color: var(--muted); font-size: 12px; }
+  .tile.hero .value { font-size: 48px; }
+  .tile.hero { cursor: default; }
+  .tile.hero:hover { background: var(--surface); }
+  .flagdot { width: 8px; height: 8px; border-radius: 50%; background: var(--critical); flex: none; }
+
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .chart { position: relative; width: 100%; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); margin: 0 0 10px; padding: 0; list-style: none; }
+  .legend li { display: flex; align-items: center; gap: 6px; }
+  .legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .hit { cursor: pointer; }
+  .hit:hover .mark, .hit:focus .mark { filter: brightness(1.12); }
+  .hit:focus { outline: none; }
+  .hit:focus .mark { stroke: var(--ink); stroke-width: 1.5; }
+  .hit.dim .mark { opacity: 0.35; }
+
+  .seg { display: flex; gap: 2px; height: 28px; margin: 4px 0 10px; }
+  .seg > div { border-radius: 4px; display: flex; align-items: center; padding: 0 8px; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: visible; min-width: 0; cursor: pointer; }
+  .seg > div:hover { filter: brightness(1.08); }
+  .seg > div.dim { opacity: 0.35; }
+  .owner-rows { display: grid; grid-template-columns: auto 1fr auto auto; gap: 6px 12px; font-size: 13px; align-items: center; }
+  .owner-rows .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .owner-rows .pct { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 44px; }
+
+  details.data { margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+  details.data summary { cursor: pointer; }
+  details.data table { margin-top: 8px; }
+
+  /* Tooltip */
+  #tip {
+    position: fixed; pointer-events: none; z-index: 10; background: var(--surface); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12); opacity: 0; transition: opacity .1s; max-width: 260px;
+  }
+  #tip .v { font-size: 15px; font-weight: 600; }
+  #tip .k { color: var(--ink-2); display: flex; gap: 6px; align-items: center; }
+  #tip .key { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+  #tip .hint { color: var(--muted); margin-top: 4px; }
+
+  /* Table */
+  .table-head { display: flex; flex-wrap: wrap; gap: 8px 12px; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .focus-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-wash); border: 1px solid var(--series-1); border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 13px; }
+  .focus-chip button { border: 0; background: transparent; padding: 0 6px; border-radius: 999px; font-size: 15px; line-height: 1; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { position: sticky; top: 0; background: var(--surface-2); font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th .arrow { color: var(--muted); margin-left: 4px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.owners { min-width: 220px; max-width: 380px; }
+  td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  .disabled-owner { color: var(--critical-text); }
+  .muted { color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; }
+  .chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--critical); }
+  .typepill { font-size: 12px; color: var(--ink-2); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+  .typepill::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--series-1); }
+  .typepill.ent::before { background: var(--series-2); }
+  .more { margin-top: 10px; display: flex; gap: 10px; align-items: center; color: var(--ink-2); font-size: 13px; }
+  footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
+  footer p { margin: 4px 0; }
+
+  @media (max-width: 1000px) {
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tile.hero { grid-column: 1 / -1; }
+    .grid { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 480px) {
+    .tile .value { font-size: 26px; }
+    .tile.hero .value { font-size: 40px; }
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Entra app hygiene</h1>
+      <p class="sub" id="subtitle">App registrations and enterprise applications: sign-in activity and ownership</p>
+    </div>
+    <div class="actions">
+      <input type="file" id="file" accept=".csv,text/csv" class="hidden">
+      <button class="primary" id="btnLoad" type="button">Load CSV…</button>
+      <button id="btnSample" type="button">Sample data</button>
+    </div>
+  </header>
+
+  <div id="drop">
+    <strong>Drop the report CSV here</strong>
+    Generate it with <code>.\Get-EntraAppSignInReport.ps1 -OutputPath .\apps.csv</code>, then drop it here or use <em>Load CSV</em>.<br>
+    The file is read in your browser only; nothing is uploaded.
+  </div>
+
+  <main id="dash" class="hidden">
+    <div id="banners"></div>
+
+    <div class="filters" role="group" aria-label="Filters">
+      <label>Type
+        <select id="fType">
+          <option value="all">All</option>
+          <option value="AppRegistration">App registrations</option>
+          <option value="EnterpriseApp">Enterprise apps</option>
+        </select>
+      </label>
+      <label>Unused threshold
+        <select id="fStale">
+          <option value="365">1 year</option>
+          <option value="730" selected>2 years</option>
+          <option value="1095">3 years</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="fDisabledSp"> Hide disabled enterprise apps</label>
+      <input type="search" id="fSearch" placeholder="Search name, app ID or owner" aria-label="Search">
+    </div>
+
+    <section class="tiles" id="tiles" aria-label="Summary"></section>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Last sign-in</h2>
+        <p class="card-sub">How long since each app was last used, by any sign-in method. Click a column to list those apps.</p>
+        <ul class="legend" id="lgRecency"></ul>
+        <div class="chart" id="chRecency"></div>
+        <details class="data"><summary>Show data</summary><div id="tbRecency"></div></details>
+      </section>
+      <section class="card">
+        <h2>Findings by app type</h2>
+        <p class="card-sub">Number of apps with each finding. An app can have more than one finding. Click a bar to list those apps.</p>
+        <ul class="legend" id="lgFindings"></ul>
+        <div class="chart" id="chFindings"></div>
+        <details class="data"><summary>Show data</summary><div id="tbFindings"></div></details>
+      </section>
+    </div>
+
+    <section class="card" style="margin-bottom:12px">
+      <h2>Ownership health</h2>
+      <p class="card-sub">Whether each app has at least one owner with an enabled account. Click a part to list those apps.</p>
+      <ul class="legend" id="lgOwners"></ul>
+      <div class="seg" id="segOwners" role="group" aria-label="Ownership breakdown"></div>
+      <div class="owner-rows" id="rowsOwners"></div>
+    </section>
+
+    <section class="card">
+      <div class="table-head">
+        <div>
+          <h2 id="tblTitle">Applications</h2>
+          <p class="card-sub" id="tblSub" style="margin:0"></p>
+        </div>
+        <div class="actions">
+          <span id="focusChip"></span>
+          <button type="button" id="btnExport">Export these rows</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table id="tbl">
+          <thead><tr id="thead"></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="more" id="more"></div>
+    </section>
+
+    <footer>
+      <p>“Never signed in” means the sign-in activity report has no record for the app. That report only covers a limited history, and apps created recently may not have been used yet; check the Created column.</p>
+      <p>App registrations take the sign-in activity of their enterprise app (service principal) in this tenant. App registrations with no enterprise app here show as never signed in.</p>
+    </footer>
+  </main>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const DAY = 86400000;
+  const fmtInt = new Intl.NumberFormat();
+  const fmtDate = (d) => d ? d.toISOString().slice(0, 10) : '';
+
+  const FINDINGS = [
+    { key: 'never',    label: 'Never signed in' },
+    { key: 'noOwners', label: 'No owners' },
+    { key: 'disabled', label: 'Disabled owner(s)' },
+    { key: 'stale',    label: 'Unused' }   // label completed with threshold
+  ];
+  const TYPES = [
+    { key: 'AppRegistration', label: 'App registrations', color: 'var(--series-1)' },
+    { key: 'EnterpriseApp',   label: 'Enterprise apps',   color: 'var(--series-2)' }
+  ];
+  const OWNERSHIP = [
+    { key: 'ok',      label: 'Enabled owner(s) only', color: 'var(--good)',     ink: '#ffffff' },
+    { key: 'some',    label: 'Some owners disabled',  color: 'var(--warning)',  ink: '#0b0b0b' },
+    { key: 'all',     label: 'All owners disabled',   color: 'var(--serious)',  ink: '#ffffff' },
+    { key: 'none',    label: 'No owners',             color: 'var(--critical)', ink: '#ffffff' }
+  ];
+
+  let ALL = [];          // parsed rows
+  let META = {};         // report info
+  let focus = null;      // drill-down: {kind, value, label}
+  let sort = { key: 'risk', dir: -1 };
+  let pageSize = 200;
+
+  // ---------------------------------------------------------------- CSV ----
+  function parseCsv(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const rows = []; let row = []; let field = ''; let q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+        else field += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(field); field = ''; rows.push(row); row = [];
+      } else field += c;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    const head = rows.shift() || [];
+    return rows.filter(r => r.length > 1 || r[0]).map(r => {
+      const o = {}; head.forEach((h, i) => o[h.trim()] = (r[i] ?? '').trim()); return o;
+    });
+  }
+
+  function parseDate(s) {
+    if (!s) return null;
+    // ISO 8601 (current script output)
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+      const d = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(s) ? s : s.replace(' ', 'T') + 'Z');
+      return isNaN(d) ? null : d;
+    }
+    // Locale formatted (older script output) - assume dd/mm/yyyy unless that is impossible
+    const m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if (m) {
+      let a = +m[1], b = +m[2];
+      let day = a, mon = b;
+      if (b > 12 && a <= 12) { day = b; mon = a; }
+      const d = new Date(Date.UTC(+m[3], mon - 1, day, +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)));
+      return isNaN(d) ? null : d;
+    }
+    const d = new Date(s); return isNaN(d) ? null : d;
+  }
+  const bool = (s) => /^true$/i.test(s || '');
+  const num = (s) => (s === '' || s == null || isNaN(+s)) ? null : +s;
+
+  function load(text, sourceName) {
+    const raw = parseCsv(text);
+    if (!raw.length || !('DisplayName' in raw[0]) || !('ObjectType' in raw[0])) {
+      alert('This does not look like a Get-EntraAppSignInReport.ps1 CSV (missing ObjectType / DisplayName columns).');
+      return;
+    }
+    const cols = Object.keys(raw[0]);
+    const reportDate = parseDate(raw[0].ReportGeneratedUtc) || null;
+    const refTime = reportDate ? reportDate.getTime() : Date.now();
+    META = {
+      source: sourceName,
+      reportDate,
+      hasOwnerStatus: cols.includes('DisabledOwnerCount'),
+      signInAvailable: raw.some(r => bool(r.SignInDataAvailable)) || !cols.includes('SignInDataAvailable'),
+    };
+    ALL = raw.map((r, i) => {
+      const last = parseDate(r.LastSignIn);
+      let days = last ? Math.floor((refTime - last.getTime()) / DAY) : null;
+      if (days == null && num(r.DaysSinceLastSignIn) != null) days = num(r.DaysSinceLastSignIn);
+      const ownerCount = num(r.OwnerCount) || 0;
+      const disabledCount = num(r.DisabledOwnerCount) || 0;
+      const ownership = ownerCount === 0 ? 'none'
+        : !META.hasOwnerStatus ? 'ok'
+        : disabledCount >= ownerCount ? 'all'
+        : disabledCount > 0 ? 'some' : 'ok';
+      return {
+        i,
+        type: r.ObjectType,
+        name: r.DisplayName || '(no name)',
+        appId: r.AppId || '',
+        objectId: r.ObjectId || '',
+        created: parseDate(r.CreatedDateTime),
+        last, days,
+        method: r.LastSignInType || '',
+        ownerCount, disabledCount,
+        owners: (r.Owners || '').split(';').map(s => s.trim()).filter(Boolean),
+        ownership,
+        spType: r.ServicePrincipalType || '',
+        enabled: r.AccountEnabled === '' ? null : bool(r.AccountEnabled),
+        signInAvail: r.SignInDataAvailable === undefined ? true : bool(r.SignInDataAvailable),
+        raw: r,
+      };
+    });
+    focus = null;
+    $('drop').classList.add('hidden');
+    $('dash').classList.remove('hidden');
+    const when = reportDate ? `report generated ${fmtDate(reportDate)}` : 'report date unknown';
+    $('subtitle').textContent = `${sourceName} · ${fmtInt.format(ALL.length)} objects · ${when}`;
+    renderBanners();
+    render();
+  }
+
+  // ------------------------------------------------------------ filtering --
+  function staleDays() { return +$('fStale').value; }
+  function staleLabel() { const y = staleDays() / 365; return `Unused > ${y} year${y > 1 ? 's' : ''}`; }
+
+  function flags(r) {
+    const f = [];
+    if (r.signInAvail && !r.last) f.push('never');
+    if (r.ownerCount === 0) f.push('noOwners');
+    if (r.disabledCount > 0) f.push('disabled');
+    if (r.days != null && r.days > staleDays()) f.push('stale');
+    return f;
+  }
+  function bucketOf(r) {
+    if (!r.last) return 'never';
+    const d = r.days;
+    if (d <= 30) return 'b30';
+    if (d <= 90) return 'b90';
+    if (d <= 365) return 'b365';
+    if (d <= 730) return 'b730';
+    if (d <= 1095) return 'b1095';
+    return 'bmax';
+  }
+  const BUCKETS = [
+    { key: 'b30',   label: '≤ 30 days',  min: 0 },
+    { key: 'b90',   label: '31–90 days', min: 31 },
+    { key: 'b365',  label: '91 days–1 yr', min: 91 },
+    { key: 'b730',  label: '1–2 yrs',    min: 366 },
+    { key: 'b1095', label: '2–3 yrs',    min: 731 },
+    { key: 'bmax',  label: '> 3 yrs',    min: 1096 },
+    { key: 'never', label: 'Never',      min: Infinity },
+  ];
+
+  function scoped() {
+    const t = $('fType').value;
+    const hideDis = $('fDisabledSp').checked;
+    const q = $('fSearch').value.trim().toLowerCase();
+    return ALL.filter(r => {
+      if (t !== 'all' && r.type !== t) return false;
+      if (hideDis && r.type === 'EnterpriseApp' && r.enabled === false) return false;
+      if (q && !(r.name.toLowerCase().includes(q) || r.appId.toLowerCase().includes(q) ||
+                 r.owners.some(o => o.toLowerCase().includes(q)))) return false;
+      return true;
+    });
+  }
+  function applyFocus(rows) {
+    if (!focus) return rows;
+    return rows.filter(r => {
+      switch (focus.kind) {
+        case 'finding': return flags(r).includes(focus.value) && (!focus.type || r.type === focus.type);
+        case 'any':     return flags(r).length > 0;
+        case 'bucket':  return bucketOf(r) === focus.value;
+        case 'owner':   return r.ownership === focus.value;
+      }
+      return true;
+    });
+  }
+  function setFocus(f) {
+    const same = focus && f && focus.kind === f.kind && focus.value === f.value && focus.type === f.type;
+    focus = same ? null : f;
+    render();
+    if (focus) $('tblTitle').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ------------------------------------------------------------ tooltip ----
+  const tip = $('tip');
+  function showTip(evt, value, label, color, hint) {
+    tip.replaceChildren();
+    const v = document.createElement('div'); v.className = 'v'; v.textContent = value;
+    const k = document.createElement('div'); k.className = 'k';
+    if (color) { const key = document.createElement('span'); key.className = 'key'; key.style.background = color; k.append(key); }
+    k.append(document.createTextNode(label));
+    tip.append(v, k);
+    if (hint) { const h = document.createElement('div'); h.className = 'hint'; h.textContent = hint; tip.append(h); }
+    let x, y;
+    if (evt.clientX != null && evt.type !== 'focus') { x = evt.clientX; y = evt.clientY; }
+    else { const b = evt.currentTarget.getBoundingClientRect(); x = b.left + b.width / 2; y = b.top; }
+    tip.style.opacity = '1';
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = x + 12, top = y - th - 12;
+    if (left + tw > innerWidth - 8) left = x - tw - 12;
+    if (top < 8) top = y + 16;
+    tip.style.left = Math.max(8, left) + 'px'; tip.style.top = top + 'px';
+  }
+  function hideTip() { tip.style.opacity = '0'; }
+
+  function svgEl(tag, attrs, parent) {
+    const e = document.createElementNS(SVGNS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.append(e);
+    return e;
+  }
+  // bar path with 4px rounded data end, square at baseline
+  function vBar(x, y, w, h) {
+    const r = Math.min(4, w / 2, h);
+    return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+  }
+  function hBar(x, y, w, h) {
+    const r = Math.min(4, h / 2, w);
+    return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h - r}Q${x + w},${y + h} ${x + w - r},${y + h}H${x}Z`;
+  }
+  function niceMax(v) {
+    if (v <= 5) return 5;
+    const p = Math.pow(10, Math.floor(Math.log10(v)));
+    for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
+    return 10 * p;
+  }
+  function legend(el, items) {
+    el.replaceChildren(...items.map(it => {
+      const li = document.createElement('li');
+      const sw = document.createElement('span'); sw.className = 'sw'; sw.style.background = it.color;
+      li.append(sw, document.createTextNode(it.label)); return li;
+    }));
+  }
+  function dataTable(el, head, rows) {
+    const t = document.createElement('table');
+    const tr = document.createElement('tr');
+    head.forEach(h => { const th = document.createElement('th'); th.textContent = h; tr.append(th); });
+    const thead = document.createElement('thead'); thead.append(tr); t.append(thead);
+    const tb = document.createElement('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      r.forEach((c, i) => { const td = document.createElement('td'); td.textContent = c; if (i) td.className = 'num'; tr.append(td); });
+      tb.append(tr);
+    });
+    t.append(tb); el.replaceChildren(t);
+  }
+  function hitKeys(g, fn) {
+    g.setAttribute('tabindex', '0'); g.setAttribute('role', 'button');
+    g.addEventListener('click', fn);
+    g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } });
+  }
+
+  // ------------------------------------------------------- recency chart ---
+  function renderRecency(rows) {
+    const el = $('chRecency');
+    const thr = staleDays();
+    const counts = Object.fromEntries(BUCKETS.map(b => [b.key, 0]));
+    rows.forEach(r => counts[bucketOf(r)]++);
+    const flagged = (b) => b.key === 'never' ? META.signInAvailable : b.min > thr;
+    legend($('lgRecency'), [
+      { label: 'In use within threshold', color: 'var(--series-1)' },
+      { label: `${staleLabel()} or never`, color: 'var(--serious)' }
+    ]);
+
+    const W = Math.max(280, el.clientWidth), padT = 18;
+    const rotate = (W - 44) / BUCKETS.length < 56;   // rotate x labels on narrow screens
+    const padL = rotate ? 52 : 40, padB = rotate ? 70 : 40, H = 200 + padB + padT;
+    const plotW = W - padL - 4, plotH = H - padB - padT;
+    const max = niceMax(Math.max(1, ...Object.values(counts)));
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img',
+      'aria-label': 'Apps by time since last sign-in: ' + BUCKETS.map(b => `${b.label} ${counts[b.key]}`).join(', ') });
+    for (let i = 0; i <= 4; i++) {
+      const v = max * i / 4, y = padT + plotH - plotH * i / 4;
+      svgEl('line', { x1: padL, x2: W, y1: y, y2: y, stroke: i ? 'var(--grid)' : 'var(--axis)', 'stroke-width': 1 }, svg);
+      const t = svgEl('text', { x: padL - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--muted)', style: 'font-variant-numeric:tabular-nums' }, svg);
+      t.textContent = fmtInt.format(Math.round(v));
+    }
+    const band = plotW / BUCKETS.length, bw = Math.min(24, band * 0.6);
+    BUCKETS.forEach((b, i) => {
+      const c = counts[b.key], x = padL + band * i + (band - bw) / 2;
+      const h = c ? Math.max(2, plotH * c / max) : 0, y = padT + plotH - h;
+      const color = flagged(b) ? 'var(--serious)' : 'var(--series-1)';
+      const g = svgEl('g', { class: 'hit' + (focus && focus.kind === 'bucket' && focus.value !== b.key ? ' dim' : ''),
+        'aria-label': `${b.label}: ${c} apps` }, svg);
+      svgEl('rect', { x: padL + band * i, y: padT, width: band, height: plotH, fill: 'transparent' }, g);
+      if (h) svgEl('path', { d: vBar(x, y, bw, h), fill: color, class: 'mark' }, g);
+      const vt = svgEl('text', { x: x + bw / 2, y: y - 6, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600, fill: 'var(--ink)' }, g);
+      vt.textContent = fmtInt.format(c);
+      const lt = svgEl('text', { x: padL + band * i + band / 2, y: H - padB + 18, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--ink-2)' }, g);
+      lt.textContent = b.label;
+      if (band < 74) lt.setAttribute('font-size', 10);
+      if (rotate) { lt.setAttribute('transform', `rotate(-35 ${padL + band * i + band / 2} ${H - padB + 18})`); lt.setAttribute('text-anchor', 'end'); }
+      const pct = rows.length ? Math.round(c / rows.length * 100) : 0;
+      const tipFn = (e) => showTip(e, `${fmtInt.format(c)} apps`, `Last sign-in ${b.key === 'never' ? 'never' : b.label}`, color, `${pct}% of apps in view · click to list`);
+      g.addEventListener('pointermove', tipFn); g.addEventListener('focus', tipFn);
+      g.addEventListener('pointerleave', hideTip); g.addEventListener('blur', hideTip);
+      hitKeys(g, () => setFocus({ kind: 'bucket', value: b.key, label: `Last sign-in: ${b.label}` }));
+    });
+    el.replaceChildren(svg);
+    dataTable($('tbRecency'), ['Last sign-in', 'Apps'], BUCKETS.map(b => [b.label, fmtInt.format(counts[b.key])]));
+  }
+
+  // ------------------------------------------------------ findings chart ---
+  function renderFindings(rows) {
+    const el = $('chFindings');
+    const types = TYPES.filter(t => $('fType').value === 'all' || $('fType').value === t.key);
+    const data = FINDINGS.map(f => ({
+      ...f, label: f.key === 'stale' ? staleLabel() : f.label,
+      vals: types.map(t => rows.filter(r => r.type === t.key && flags(r).includes(f.key)).length)
+    }));
+    legend($('lgFindings'), types.map(t => ({ label: t.label, color: t.color })));
+
+    const W = Math.max(280, el.clientWidth);
+    const labelW = Math.min(150, W * 0.38), barH = 16, gap = 2, groupGap = 18;
+    const groupH = types.length * barH + (types.length - 1) * gap;
+    const H = data.length * groupH + (data.length - 1) * groupGap + 8;
+    const plotW = W - labelW - 48;
+    const max = Math.max(1, ...data.flatMap(d => d.vals));
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img',
+      'aria-label': 'Findings by app type: ' + data.map(d => `${d.label} ` + d.vals.map((v, i) => `${types[i].label} ${v}`).join(', ')).join('; ') });
+    svgEl('line', { x1: labelW, x2: labelW, y1: 0, y2: H - 4, stroke: 'var(--axis)', 'stroke-width': 1 }, svg);
+    data.forEach((d, gi) => {
+      const gy = gi * (groupH + groupGap);
+      const lt = svgEl('text', { x: labelW - 10, y: gy + groupH / 2 + 4, 'text-anchor': 'end', 'font-size': 12, fill: 'var(--ink-2)' }, svg);
+      lt.textContent = d.label;
+      d.vals.forEach((v, ti) => {
+        const t = types[ti], y = gy + ti * (barH + gap), w = v ? Math.max(2, plotW * v / max) : 0;
+        const isFocus = focus && focus.kind === 'finding' && focus.value === d.key && (!focus.type || focus.type === t.key);
+        const g = svgEl('g', { class: 'hit' + (focus && focus.kind === 'finding' && !isFocus ? ' dim' : ''), 'aria-label': `${d.label}, ${t.label}: ${v}` }, svg);
+        svgEl('rect', { x: labelW, y: y - 1, width: W - labelW, height: barH + 2, fill: 'transparent' }, g);
+        if (w) svgEl('path', { d: hBar(labelW + 1, y, w, barH), fill: t.color, class: 'mark' }, g);
+        const vt = svgEl('text', { x: labelW + 1 + w + 6, y: y + barH / 2 + 4, 'font-size': 12, 'font-weight': 600, fill: 'var(--ink)' }, g);
+        vt.textContent = fmtInt.format(v);
+        const total = rows.filter(r => r.type === t.key).length;
+        const tipFn = (e) => showTip(e, `${fmtInt.format(v)} of ${fmtInt.format(total)}`, `${t.label} · ${d.label}`, t.color, 'click to list');
+        g.addEventListener('pointermove', tipFn); g.addEventListener('focus', tipFn);
+        g.addEventListener('pointerleave', hideTip); g.addEventListener('blur', hideTip);
+        hitKeys(g, () => setFocus({ kind: 'finding', value: d.key, type: t.key, label: `${d.label} · ${t.label}` }));
+      });
+    });
+    el.replaceChildren(svg);
+    dataTable($('tbFindings'), ['Finding', ...types.map(t => t.label)], data.map(d => [d.label, ...d.vals.map(v => fmtInt.format(v))]));
+  }
+
+  // --------------------------------------------------- ownership bar -------
+  function renderOwnership(rows) {
+    const total = rows.length || 1;
+    const items = OWNERSHIP.map(o => ({ ...o, n: rows.filter(r => r.ownership === o.key).length }));
+    const shown = META.hasOwnerStatus ? items : items.filter(o => o.key === 'ok' || o.key === 'none')
+      .map(o => o.key === 'ok' ? { ...o, label: 'Has owner(s) (status unknown)' } : o);
+    legend($('lgOwners'), shown.map(o => ({ label: o.label, color: o.color })));
+    const seg = $('segOwners'); seg.replaceChildren();
+    const rowsEl = $('rowsOwners'); rowsEl.replaceChildren();
+    shown.forEach(o => {
+      const pct = o.n / total * 100;
+      const act = () => setFocus({ kind: 'owner', value: o.key, label: o.label });
+      if (o.n) {
+        const d = document.createElement('div');
+        d.style.flex = `${o.n} 1 0`; d.style.background = o.color; d.style.color = o.ink;
+        d.tabIndex = 0; d.setAttribute('role', 'button');
+        d.setAttribute('aria-label', `${o.label}: ${o.n} apps, ${pct.toFixed(0)}%`);
+        if (focus && focus.kind === 'owner' && focus.value !== o.key) d.classList.add('dim');
+        const label = `${Math.round(pct)}%`;
+        // only print the share inside when it fits comfortably
+        requestAnimationFrame(() => { if (d.clientWidth >= label.length * 8 + 16) d.textContent = label; });
+        const tipFn = (e) => showTip(e, `${fmtInt.format(o.n)} apps · ${pct.toFixed(1)}%`, o.label, o.color, 'click to list');
+        d.addEventListener('pointermove', tipFn); d.addEventListener('focus', tipFn);
+        d.addEventListener('pointerleave', hideTip); d.addEventListener('blur', hideTip);
+        d.addEventListener('click', act);
+        d.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } });
+        seg.append(d);
+      }
+      const sw = document.createElement('span'); sw.className = 'sw'; sw.style.cssText = `width:10px;height:10px;border-radius:2px;background:${o.color}`;
+      const nm = document.createElement('span'); nm.textContent = o.label;
+      const n = document.createElement('span'); n.className = 'num'; n.textContent = fmtInt.format(o.n);
+      const p = document.createElement('span'); p.className = 'pct'; p.textContent = `${pct.toFixed(1)}%`;
+      rowsEl.append(sw, nm, n, p);
+    });
+  }
+
+  // --------------------------------------------------------------- tiles ---
+  function renderTiles(rows) {
+    const tiles = $('tiles'); tiles.replaceChildren();
+    const withFlags = rows.filter(r => flags(r).length).length;
+    const n = (k) => rows.filter(r => flags(r).includes(k)).length;
+    const pct = (v) => rows.length ? `${Math.round(v / rows.length * 100)}% of ${fmtInt.format(rows.length)}` : '';
+    const allDis = rows.filter(r => r.ownership === 'all').length;
+    const defs = [
+      { hero: true, label: 'Apps needing attention', value: withFlags, meta: `${pct(withFlags)} have at least one finding`, f: { kind: 'any', value: 'any', label: 'Any finding' } },
+      { label: 'Never signed in', value: META.signInAvailable ? n('never') : '–', meta: META.signInAvailable ? pct(n('never')) : 'no sign-in data', f: { kind: 'finding', value: 'never', label: 'Never signed in' } },
+      { label: 'No owners', value: n('noOwners'), meta: pct(n('noOwners')), f: { kind: 'finding', value: 'noOwners', label: 'No owners' } },
+      { label: 'Disabled owner(s)', value: META.hasOwnerStatus ? n('disabled') : '–',
+        meta: META.hasOwnerStatus ? `${fmtInt.format(allDis)} with every owner disabled` : 're-run script for status',
+        f: { kind: 'finding', value: 'disabled', label: 'Disabled owner(s)' } },
+      { label: staleLabel(), value: n('stale'), meta: pct(n('stale')), f: { kind: 'finding', value: 'stale', label: staleLabel() } },
+    ];
+    defs.forEach(d => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'tile' + (d.hero ? ' hero' : '');
+      const active = focus && d.f && focus.kind === d.f.kind && focus.value === d.f.value && !focus.type;
+      b.setAttribute('aria-pressed', active ? 'true' : 'false');
+      const l = document.createElement('span'); l.className = 'label';
+      if (!d.hero) { const dot = document.createElement('span'); dot.className = 'flagdot'; l.append(dot); }
+      l.append(document.createTextNode(d.label));
+      const v = document.createElement('span'); v.className = 'value'; v.textContent = typeof d.value === 'number' ? fmtInt.format(d.value) : d.value;
+      const m = document.createElement('span'); m.className = 'meta'; m.textContent = d.meta;
+      b.append(l, v, m);
+      b.addEventListener('click', () => setFocus(d.f));
+      if (d.hero) b.style.cursor = 'pointer';
+      tiles.append(b);
+    });
+  }
+
+  // --------------------------------------------------------------- table ---
+  const COLS = [
+    { key: 'type',     label: 'Type',        get: r => r.type },
+    { key: 'name',     label: 'Name',        get: r => r.name.toLowerCase() },
+    { key: 'risk',     label: 'Findings',    get: r => flags(r).length },
+    { key: 'last',     label: 'Last sign-in', get: r => r.last ? r.last.getTime() : -1 },
+    { key: 'days',     label: 'Days',        get: r => r.days ?? Infinity },
+    { key: 'method',   label: 'Method',      get: r => r.method },
+    { key: 'created',  label: 'Created',     get: r => r.created ? r.created.getTime() : -1 },
+    { key: 'owners',   label: 'Owners',      get: r => r.ownerCount },
+    { key: 'appId',    label: 'App ID',      get: r => r.appId },
+  ];
+  const FLAG_LABEL = { never: 'Never signed in', noOwners: 'No owners', disabled: 'Disabled owner', stale: null };
+
+  function renderTable(rows) {
+    const head = $('thead'); head.replaceChildren();
+    COLS.forEach(c => {
+      const th = document.createElement('th'); th.className = 'sortable'; th.scope = 'col';
+      th.textContent = c.label; th.tabIndex = 0;
+      th.setAttribute('aria-sort', sort.key === c.key ? (sort.dir > 0 ? 'ascending' : 'descending') : 'none');
+      if (sort.key === c.key) { const a = document.createElement('span'); a.className = 'arrow'; a.textContent = sort.dir > 0 ? '▲' : '▼'; th.append(a); }
+      const act = () => { sort = { key: c.key, dir: sort.key === c.key ? -sort.dir : (c.key === 'name' || c.key === 'type' ? 1 : -1) }; renderTable(rows); };
+      th.addEventListener('click', act);
+      th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } });
+      head.append(th);
+    });
+    const col = COLS.find(c => c.key === sort.key);
+    const sorted = [...rows].sort((a, b) => {
+      const x = col.get(a), y = col.get(b);
+      const c = x < y ? -1 : x > y ? 1 : 0;
+      return c * sort.dir || a.name.localeCompare(b.name);
+    });
+    const tb = $('tbody'); tb.replaceChildren();
+    const frag = document.createDocumentFragment();
+    sorted.slice(0, pageSize).forEach(r => {
+      const tr = document.createElement('tr');
+      const td = (cls) => { const d = document.createElement('td'); if (cls) d.className = cls; tr.append(d); return d; };
+      const tType = td(); const pill = document.createElement('span');
+      pill.className = 'typepill' + (r.type === 'EnterpriseApp' ? ' ent' : '');
+      pill.textContent = r.type === 'EnterpriseApp' ? 'Enterprise' : 'App reg';
+      tType.append(pill);
+      if (r.type === 'EnterpriseApp' && r.enabled === false) { const s = document.createElement('div'); s.className = 'muted'; s.textContent = 'sign-in disabled'; tType.append(s); }
+      const tName = td(); tName.textContent = r.name;
+      if (r.spType && r.spType !== 'Application') { const s = document.createElement('div'); s.className = 'muted'; s.textContent = r.spType; tName.append(s); }
+      const tF = td(); const chips = document.createElement('div'); chips.className = 'chips';
+      flags(r).forEach(f => { const c = document.createElement('span'); c.className = 'chip'; c.textContent = FLAG_LABEL[f] || staleLabel(); chips.append(c); });
+      tF.append(chips);
+      const tL = td('nowrap'); tL.textContent = r.last ? fmtDate(r.last) : (r.signInAvail ? 'Never' : 'n/a'); if (!r.last) tL.classList.add('muted');
+      td('num').textContent = r.days == null ? '' : fmtInt.format(r.days);
+      td().textContent = r.method;
+      td('nowrap').textContent = fmtDate(r.created);
+      const tO = td('owners');
+      if (!r.owners.length) { tO.textContent = 'None'; tO.classList.add('muted'); }
+      r.owners.slice(0, 5).forEach(o => {
+        const d = document.createElement('div');
+        if (/\[disabled\]$/.test(o)) { d.className = 'disabled-owner'; d.textContent = o.replace(/\s*\[disabled\]$/, '') + ' (disabled)'; }
+        else d.textContent = o;
+        tO.append(d);
+      });
+      if (r.owners.length > 5) { const d = document.createElement('div'); d.className = 'muted'; d.textContent = `+${r.owners.length - 5} more`; tO.append(d); }
+      td('mono').textContent = r.appId;
+      frag.append(tr);
+    });
+    if (!sorted.length) {
+      const tr = document.createElement('tr'); const d = document.createElement('td'); d.colSpan = COLS.length;
+      d.className = 'muted'; d.textContent = 'No apps match the current filters.'; tr.append(d); frag.append(tr);
+    }
+    tb.append(frag);
+    const more = $('more'); more.replaceChildren();
+    if (sorted.length > pageSize) {
+      const s = document.createElement('span'); s.textContent = `Showing ${fmtInt.format(pageSize)} of ${fmtInt.format(sorted.length)}`;
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Show more';
+      b.addEventListener('click', () => { pageSize += 500; renderTable(rows); });
+      more.append(s, b);
+    }
+  }
+
+  function renderBanners() {
+    const el = $('banners'); el.replaceChildren();
+    const add = (msg) => {
+      const d = document.createElement('div'); d.className = 'banner';
+      const i = document.createElement('span'); i.className = 'ico'; i.textContent = '!';
+      const t = document.createElement('div'); t.textContent = msg;
+      d.append(i, t); el.append(d);
+    };
+    if (!META.signInAvailable) add('This CSV has no sign-in activity data (the script could not read the sign-in report: it needs AuditLog.Read.All, a reports reader role and an Entra ID P1/P2 licence). "Never signed in" and "Unused" cannot be worked out.');
+    if (!META.hasOwnerStatus) add('This CSV was produced by an older version of the script and does not include owner account status. Re-run Get-EntraAppSignInReport.ps1 to see apps with disabled owners.');
+  }
+
+  function render() {
+    if (!ALL.length) return;
+    hideTip();
+    const rows = scoped();
+    renderTiles(rows);
+    renderRecency(rows);
+    renderFindings(rows);
+    renderOwnership(rows);
+    const list = applyFocus(rows);
+    $('tblTitle').textContent = focus ? focus.label : 'All applications in view';
+    $('tblSub').textContent = `${fmtInt.format(list.length)} of ${fmtInt.format(rows.length)} apps`;
+    const chip = $('focusChip'); chip.replaceChildren();
+    if (focus) {
+      const c = document.createElement('span'); c.className = 'focus-chip';
+      c.append(document.createTextNode(focus.label));
+      const x = document.createElement('button'); x.type = 'button'; x.textContent = '×'; x.setAttribute('aria-label', 'Clear selection');
+      x.addEventListener('click', () => setFocus(null));
+      c.append(x); chip.append(c);
+    }
+    pageSize = 200;
+    renderTable(list);
+    lastList = list;
+  }
+  let lastList = [];
+
+  // -------------------------------------------------------------- export ---
+  function exportRows() {
+    if (!lastList.length) return;
+    const cols = Object.keys(lastList[0].raw);
+    const esc = (v) => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    const lines = [[...cols, 'Findings'].map(esc).join(',')];
+    lastList.forEach(r => lines.push([...cols.map(c => r.raw[c] ?? ''), flags(r).map(f => FLAG_LABEL[f] || staleLabel()).join('; ')].map(esc).join(',')));
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (focus ? focus.label : 'apps').replace(/[^\w]+/g, '-').toLowerCase() + '.csv';
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // -------------------------------------------------------------- sample ---
+  function sampleCsv() {
+    let seed = 42; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const pick = (a) => a[Math.floor(rnd() * a.length)];
+    const now = Date.UTC(2026, 10, 6, 9, 0, 0);
+    const iso = (t) => new Date(t).toISOString().slice(0, 19) + 'Z';
+    const words = ['Payroll', 'HR Portal', 'Expenses', 'CRM Sync', 'Backup Agent', 'Teams Bot', 'Data Lake', 'Power BI Gateway', 'Intranet', 'Ticketing', 'Legacy SSO', 'Marketing Site', 'Build Pipeline', 'Terraform', 'Monitoring', 'Doc Signing', 'Learning Portal', 'Visitor Wi-Fi', 'Asset Tracker', 'Reporting API'];
+    const vendors = ['Salesforce', 'ServiceNow', 'Zoom', 'Slack', 'Workday', 'DocuSign', 'Atlassian Cloud', 'Adobe Sign', 'Box', 'Miro', 'Zscaler', 'GitHub Enterprise', 'Okta Bridge', 'Tableau', 'Smartsheet'];
+    const people = ['Alex Morgan', 'Sam Patel', 'Jordan Lee', 'Chris Nolan', 'Priya Shah', 'Taylor Brooks', 'Robin Chen', 'Jamie Fox', 'Casey Wong', 'Drew Evans', 'Morgan Diaz', 'Riley Kim'];
+    const disabledPeople = new Set(['Chris Nolan', 'Jamie Fox', 'Drew Evans']);
+    const methods = ['Delegated (client)', 'Delegated (resource)', 'App-only (client)', 'App-only (resource)'];
+    const head = ['ObjectType', 'DisplayName', 'AppId', 'ObjectId', 'CreatedDateTime', 'LastSignIn', 'LastSignInType', 'DaysSinceLastSignIn', 'OwnerCount', 'Owners', 'EnabledOwnerCount', 'DisabledOwnerCount', 'DisabledOwners', 'AllOwnersDisabled', 'ServicePrincipalType', 'AccountEnabled', 'SignInAudience', 'PublisherTenantId', 'SignInDataAvailable', 'ReportGeneratedUtc'];
+    const guid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.floor(rnd() * 16); return (c === 'x' ? r : (r & 3) | 8).toString(16); });
+    const rows = [];
+    const make = (type, name) => {
+      const ageDays = Math.floor(rnd() * 2800) + 5;
+      const created = now - ageDays * DAY;
+      const u = rnd();
+      let last = null;
+      if (u > 0.14) {
+        const since = u > 0.55 ? rnd() * 60 : u > 0.35 ? rnd() * 400 : rnd() * ageDays;
+        last = now - Math.min(ageDays - 1, since) * DAY;
+      }
+      const nOwn = type === 'EnterpriseApp' ? (rnd() < 0.55 ? 0 : 1 + Math.floor(rnd() * 2)) : (rnd() < 0.25 ? 0 : 1 + Math.floor(rnd() * 3));
+      const own = []; while (own.length < nOwn) { const p = pick(people); if (!own.includes(p)) own.push(p); }
+      const fmt = own.map(p => `${p} <${p.toLowerCase().replace(' ', '.')}@contoso.com>${disabledPeople.has(p) ? ' [disabled]' : ''}`);
+      const dis = own.filter(p => disabledPeople.has(p));
+      rows.push([type, name, guid(), guid(), iso(created), last ? iso(last) : '', last ? pick(methods) : '',
+        last ? String(Math.floor((now - last) / DAY)) : '', String(own.length), fmt.join('; '),
+        String(own.length - dis.length), String(dis.length), fmt.filter(f => f.endsWith('[disabled]')).join('; '),
+        own.length && dis.length === own.length ? 'True' : 'False',
+        type === 'EnterpriseApp' ? 'Application' : '', type === 'EnterpriseApp' ? (rnd() < 0.08 ? 'False' : 'True') : '',
+        pick(['AzureADMyOrg', 'AzureADMultipleOrgs']), type === 'EnterpriseApp' && rnd() < 0.5 ? guid() : 'contoso-tenant', 'True', iso(now)]);
+    };
+    for (let i = 0; i < 140; i++) make('AppRegistration', `${pick(words)}${rnd() < 0.5 ? ' ' + pick(['Dev', 'Test', 'Prod', 'UAT', 'v2']) : ''}`);
+    for (let i = 0; i < 180; i++) make('EnterpriseApp', rnd() < 0.5 ? `${pick(vendors)}${rnd() < 0.3 ? ' (' + pick(['EU', 'US', 'Sandbox']) + ')' : ''}` : `${pick(words)} ${pick(['Prod', 'Dev', 'Connector'])}`);
+    const esc = (v) => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    return [head, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+  }
+
+  // --------------------------------------------------------------- wiring --
+  function readFile(f) {
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => load(String(rd.result), f.name);
+    rd.readAsText(f);
+  }
+  $('btnLoad').addEventListener('click', () => $('file').click());
+  $('file').addEventListener('change', e => { readFile(e.target.files[0]); e.target.value = ''; });
+  $('btnSample').addEventListener('click', () => load(sampleCsv(), 'Sample data'));
+  $('btnExport').addEventListener('click', exportRows);
+  ['fType', 'fStale', 'fDisabledSp'].forEach(id => $(id).addEventListener('change', render));
+  let searchT; $('fSearch').addEventListener('input', () => { clearTimeout(searchT); searchT = setTimeout(render, 150); });
+  ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement) $('drop').classList.remove('over'); }));
+  document.addEventListener('drop', e => readFile(e.dataTransfer.files[0]));
+  let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (ALL.length) { const r = scoped(); renderRecency(r); renderFindings(r); } }, 120); });
+})();
+</script>
+</body>
+</html>
