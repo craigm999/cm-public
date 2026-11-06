@@ -50,6 +50,17 @@
 .PARAMETER IncludeManagedIdentities
     Include managed identity service principals. Excluded by default.
 
+.PARAMETER ExcludeCopilotStudio
+    Leave out apps created by Microsoft Copilot Studio (formerly Power Virtual Agents).
+    Without this switch they are included and marked in the IsCopilotStudio and
+    CopilotStudioSignal columns, so they can also be filtered in the dashboard.
+
+    Detection follows Microsoft's guidance: Copilot Studio stamps tags on the service
+    principals it creates (AgentCreatedBy:CopilotStudio, power-virtual-agents-<agentId>,
+    AIAgentBuilder). Display names containing "Power Virtual Agents" or "Copilot Studio"
+    are also matched. An app registration is marked when its service principal is, so
+    use -Type All (the default) for the most complete detection.
+
 .PARAMETER OutputPath
     Optional path to export the results to CSV.
 
@@ -61,6 +72,10 @@
     .\Get-EntraAppSignInReport.ps1 |
         Where-Object { $null -eq $_.LastSignIn -or $_.DaysSinceLastSignIn -ge 90 } |
         Format-Table ObjectType, DisplayName, LastSignIn, Owners
+
+.EXAMPLE
+    # Leave out Copilot Studio / Power Virtual Agents apps
+    .\Get-EntraAppSignInReport.ps1 -ExcludeCopilotStudio -OutputPath .\apps.csv
 
 .EXAMPLE
     # App-only connection with a certificate
@@ -78,6 +93,8 @@ param(
 
     [switch]$IncludeManagedIdentities,
 
+    [switch]$ExcludeCopilotStudio,
+
     [string]$OutputPath
 )
 
@@ -90,7 +107,30 @@ $MicrosoftTenantIds = @(
     '72f988bf-86f1-41af-91ab-2d7cd011db47'  # Microsoft corporate
 )
 
+# Signals that an app was created by Copilot Studio / Power Virtual Agents
+$CopilotStudioTagPatterns = @(
+    '^AgentCreatedBy:CopilotStudio$',
+    '^power-virtual-agents-',
+    '^AIAgentBuilder$'
+)
+$CopilotStudioNamePatterns = @('Power Virtual Agents', 'Copilot Studio')
+
 #region Helpers ---------------------------------------------------------------
+
+function Get-CopilotStudioSignal {
+    <# Returns what identifies the object as a Copilot Studio / PVA app, or $null. #>
+    param($Object)
+    foreach ($tag in @(Get-Prop $Object 'tags' | Where-Object { $_ })) {
+        foreach ($pattern in $CopilotStudioTagPatterns) {
+            if ($tag -match $pattern) { return "Tag: $tag" }
+        }
+    }
+    $name = [string](Get-Prop $Object 'displayName')
+    foreach ($pattern in $CopilotStudioNamePatterns) {
+        if ($name -like "*$pattern*") { return "Name contains '$pattern'" }
+    }
+    return $null
+}
 
 function Invoke-GraphPaged {
     <# Follows @odata.nextLink and emits every item in 'value'. #>
@@ -349,7 +389,7 @@ function New-ResultRow {
 
 if ($Type -in 'All', 'AppRegistrations') {
     Write-Host 'Retrieving app registrations...' -ForegroundColor Cyan
-    $select = 'id,appId,displayName,createdDateTime,signInAudience,publisherDomain'
+    $select = 'id,appId,displayName,createdDateTime,signInAudience,publisherDomain,tags'
     $uri = "https://graph.microsoft.com/v1.0/applications?`$select=$select&`$expand=owners&`$top=100"
     $count = 0
     foreach ($app in Invoke-GraphPaged -Uri $uri) {
@@ -401,6 +441,32 @@ if ($Type -in 'All', 'EnterpriseApps') {
 #endregion
 
 #region Owner account status and output ----------------------------------------
+
+# Copilot Studio / PVA detection. Tags usually sit on the service principal, so an
+# app registration inherits the flag from its service principal (and vice versa).
+$copilotByAppId = @{}
+foreach ($p in $pending) {
+    $p.CopilotSignal = Get-CopilotStudioSignal $p.Object
+    if ($p.CopilotSignal -and $p.AppId -and -not $copilotByAppId.ContainsKey($p.AppId)) {
+        $copilotByAppId[$p.AppId] = "$($p.CopilotSignal) (on $(if ($p.ObjectType -eq 'EnterpriseApp') { 'enterprise app' } else { 'app registration' }))"
+    }
+}
+$copilotCount = 0
+$keep = [System.Collections.Generic.List[object]]::new()
+foreach ($p in $pending) {
+    $signal = if ($p.CopilotSignal) { $p.CopilotSignal } elseif ($p.AppId -and $copilotByAppId.ContainsKey($p.AppId)) { $copilotByAppId[$p.AppId] } else { $null }
+    if ($signal) { $copilotCount++ }
+    if ($signal -and $ExcludeCopilotStudio) { continue }
+    $p.Extra.Tags                = (@(Get-Prop $p.Object 'tags' | Where-Object { $_ }) -join '; ')
+    $p.Extra.IsCopilotStudio     = [bool]$signal
+    $p.Extra.CopilotStudioSignal = $signal
+    $keep.Add($p)
+}
+$pending = $keep
+if ($copilotCount) {
+    $verb = if ($ExcludeCopilotStudio) { 'excluded' } else { 'found (marked in IsCopilotStudio; use -ExcludeCopilotStudio to leave them out)' }
+    Write-Host "  $copilotCount Copilot Studio / Power Virtual Agents object(s) $verb."
+}
 
 Resolve-OwnerAccountStatus -OwnerObjects @($pending | ForEach-Object { $_.Owners })
 

@@ -169,6 +169,7 @@
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
   td.owners { min-width: 220px; max-width: 380px; }
+  td.name { min-width: 160px; }
   td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
   tr:last-child td { border-bottom: 0; }
   .disabled-owner { color: var(--critical-text); }
@@ -234,6 +235,7 @@
         </select>
       </label>
       <label><input type="checkbox" id="fDisabledSp"> Hide disabled enterprise apps</label>
+      <label title="Apps created by Microsoft Copilot Studio (formerly Power Virtual Agents), identified by their Entra tags or display name"><input type="checkbox" id="fCopilot"> <span id="fCopilotLabel">Hide Copilot Studio / PVA apps</span></label>
       <input type="search" id="fSearch" placeholder="Search name, app ID or owner" aria-label="Search">
     </div>
 
@@ -366,6 +368,14 @@
     const d = new Date(s); return isNaN(d) ? null : d;
   }
   const bool = (s) => /^true$/i.test(s || '');
+  // Same signals as the script: Copilot Studio tags, or a tell-tale display name.
+  const COPILOT_TAGS = [/^AgentCreatedBy:CopilotStudio$/i, /^power-virtual-agents-/i, /^AIAgentBuilder$/i];
+  const COPILOT_NAMES = /power virtual agents|copilot studio/i;
+  function copilotFromRaw(r) {
+    if ('IsCopilotStudio' in r) return bool(r.IsCopilotStudio);
+    const tags = (r.Tags || '').split(';').map(t => t.trim());
+    return tags.some(t => COPILOT_TAGS.some(re => re.test(t))) || COPILOT_NAMES.test(r.DisplayName || '');
+  }
   const num = (s) => (s === '' || s == null || isNaN(+s)) ? null : +s;
 
   function load(text, sourceName) {
@@ -408,6 +418,8 @@
         spType: r.ServicePrincipalType || '',
         enabled: r.AccountEnabled === '' ? null : bool(r.AccountEnabled),
         signInAvail: r.SignInDataAvailable === undefined ? true : bool(r.SignInDataAvailable),
+        copilot: copilotFromRaw(r),
+        copilotSignal: r.CopilotStudioSignal || '',
         raw: r,
       };
     });
@@ -416,6 +428,10 @@
     $('dash').classList.remove('hidden');
     const when = reportDate ? `report generated ${fmtDate(reportDate)}` : 'report date unknown';
     $('subtitle').textContent = `${sourceName} · ${fmtInt.format(ALL.length)} objects · ${when}`;
+    const nCop = ALL.filter(r => r.copilot).length;
+    $('fCopilotLabel').textContent = `Hide Copilot Studio / PVA apps (${fmtInt.format(nCop)})`;
+    $('fCopilot').disabled = nCop === 0;
+    if (!nCop) $('fCopilot').checked = false;
     renderBanners();
     render();
   }
@@ -455,10 +471,12 @@
   function scoped() {
     const t = $('fType').value;
     const hideDis = $('fDisabledSp').checked;
+    const hideCop = $('fCopilot').checked;
     const q = $('fSearch').value.trim().toLowerCase();
     return ALL.filter(r => {
       if (t !== 'all' && r.type !== t) return false;
       if (hideDis && r.type === 'EnterpriseApp' && r.enabled === false) return false;
+      if (hideCop && r.copilot) return false;
       if (q && !(r.name.toLowerCase().includes(q) || r.appId.toLowerCase().includes(q) ||
                  r.owners.some(o => o.toLowerCase().includes(q)))) return false;
       return true;
@@ -755,8 +773,9 @@
       pill.textContent = r.type === 'EnterpriseApp' ? 'Enterprise' : 'App reg';
       tType.append(pill);
       if (r.type === 'EnterpriseApp' && r.enabled === false) { const s = document.createElement('div'); s.className = 'muted'; s.textContent = 'sign-in disabled'; tType.append(s); }
-      const tName = td(); tName.textContent = r.name;
+      const tName = td('name'); tName.textContent = r.name;
       if (r.spType && r.spType !== 'Application') { const s = document.createElement('div'); s.className = 'muted'; s.textContent = r.spType; tName.append(s); }
+      if (r.copilot) { const s = document.createElement('div'); s.className = 'muted'; s.textContent = 'Copilot Studio agent'; if (r.copilotSignal) s.title = r.copilotSignal; tName.append(s); }
       const tF = td(); const chips = document.createElement('div'); chips.className = 'chips';
       flags(r).forEach(f => { const c = document.createElement('span'); c.className = 'chip'; c.textContent = FLAG_LABEL[f] || staleLabel(); chips.append(c); });
       tF.append(chips);
@@ -852,10 +871,10 @@
     const people = ['Alex Morgan', 'Sam Patel', 'Jordan Lee', 'Chris Nolan', 'Priya Shah', 'Taylor Brooks', 'Robin Chen', 'Jamie Fox', 'Casey Wong', 'Drew Evans', 'Morgan Diaz', 'Riley Kim'];
     const disabledPeople = new Set(['Chris Nolan', 'Jamie Fox', 'Drew Evans']);
     const methods = ['Delegated (client)', 'Delegated (resource)', 'App-only (client)', 'App-only (resource)'];
-    const head = ['ObjectType', 'DisplayName', 'AppId', 'ObjectId', 'CreatedDateTime', 'LastSignIn', 'LastSignInType', 'DaysSinceLastSignIn', 'OwnerCount', 'Owners', 'EnabledOwnerCount', 'DisabledOwnerCount', 'DisabledOwners', 'AllOwnersDisabled', 'ServicePrincipalType', 'AccountEnabled', 'SignInAudience', 'PublisherTenantId', 'SignInDataAvailable', 'ReportGeneratedUtc'];
+    const head = ['ObjectType', 'DisplayName', 'AppId', 'ObjectId', 'CreatedDateTime', 'LastSignIn', 'LastSignInType', 'DaysSinceLastSignIn', 'OwnerCount', 'Owners', 'EnabledOwnerCount', 'DisabledOwnerCount', 'DisabledOwners', 'AllOwnersDisabled', 'ServicePrincipalType', 'AccountEnabled', 'SignInAudience', 'PublisherTenantId', 'SignInDataAvailable', 'ReportGeneratedUtc', 'Tags', 'IsCopilotStudio', 'CopilotStudioSignal'];
     const guid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.floor(rnd() * 16); return (c === 'x' ? r : (r & 3) | 8).toString(16); });
     const rows = [];
-    const make = (type, name) => {
+    const make = (type, name, copilot) => {
       const ageDays = Math.floor(rnd() * 2800) + 5;
       const created = now - ageDays * DAY;
       const u = rnd();
@@ -873,9 +892,13 @@
         String(own.length - dis.length), String(dis.length), fmt.filter(f => f.endsWith('[disabled]')).join('; '),
         own.length && dis.length === own.length ? 'True' : 'False',
         type === 'EnterpriseApp' ? 'Application' : '', type === 'EnterpriseApp' ? (rnd() < 0.08 ? 'False' : 'True') : '',
-        pick(['AzureADMyOrg', 'AzureADMultipleOrgs']), type === 'EnterpriseApp' && rnd() < 0.5 ? guid() : 'contoso-tenant', 'True', iso(now)]);
+        pick(['AzureADMyOrg', 'AzureADMultipleOrgs']), type === 'EnterpriseApp' && rnd() < 0.5 ? guid() : 'contoso-tenant', 'True', iso(now),
+        copilot && type === 'EnterpriseApp' ? `AgentCreatedBy:CopilotStudio; power-virtual-agents-${guid()}` : '',
+        copilot ? 'True' : 'False', copilot ? 'Tag: AgentCreatedBy:CopilotStudio' + (type === 'EnterpriseApp' ? '' : ' (on enterprise app)') : '']);
     };
     for (let i = 0; i < 140; i++) make('AppRegistration', `${pick(words)}${rnd() < 0.5 ? ' ' + pick(['Dev', 'Test', 'Prod', 'UAT', 'v2']) : ''}`);
+    const bots = ['HR Helper', 'IT Help Desk Agent', 'Benefits FAQ', 'Onboarding Buddy', 'Sales Assistant', 'Policy Bot', 'Travel Agent', 'Facilities Bot', 'Store Ops Copilot', 'Leave Requests Bot', 'Procurement Helper', 'Wiki Q&A', 'Test Agent', 'Copilot Agent 1', 'Copilot Agent 2', 'Demo bot'];
+    for (let i = 0; i < 18; i++) { const n = pick(bots) + (rnd() < 0.4 ? ' ' + pick(['Dev', 'Test', 'v2']) : ''); make('AppRegistration', n, true); make('EnterpriseApp', n, true); }
     for (let i = 0; i < 180; i++) make('EnterpriseApp', rnd() < 0.5 ? `${pick(vendors)}${rnd() < 0.3 ? ' (' + pick(['EU', 'US', 'Sandbox']) + ')' : ''}` : `${pick(words)} ${pick(['Prod', 'Dev', 'Connector'])}`);
     const esc = (v) => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
     return [head, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
@@ -892,7 +915,7 @@
   $('file').addEventListener('change', e => { readFile(e.target.files[0]); e.target.value = ''; });
   $('btnSample').addEventListener('click', () => load(sampleCsv(), 'Sample data'));
   $('btnExport').addEventListener('click', exportRows);
-  ['fType', 'fStale', 'fDisabledSp'].forEach(id => $(id).addEventListener('change', render));
+  ['fType', 'fStale', 'fDisabledSp', 'fCopilot'].forEach(id => $(id).addEventListener('change', render));
   let searchT; $('fSearch').addEventListener('input', () => { clearTimeout(searchT); searchT = setTimeout(render, 150); });
   ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
   ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement) $('drop').classList.remove('over'); }));
