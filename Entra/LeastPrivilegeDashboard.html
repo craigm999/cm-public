@@ -1,0 +1,950 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Least Privilege Review</title>
+<!--
+  Dashboard for the CSV produced by Get-EntraLeastPrivilegeReport.ps1.
+  Fully self-contained: no network requests, the CSV is read locally in the browser.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ee;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6;
+    --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+    --neutral: #c3c2b7; --neutral-2: #e1e0d9; --neutral-ink: #0b0b0b;
+    --serious-text: #a8461e; --good-text: #006300;
+    --seq-1: #cde2fb; --seq-2: #9ec5f4; --seq-3: #6da7ec; --seq-4: #3987e5; --seq-5: #256abf; --seq-6: #184f95;
+    --accent-wash: rgba(42,120,214,0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+      --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --neutral: #6b6a66; --neutral-2: #3a3a37; --neutral-ink: #f0efec;
+      --serious-text: #f0a27f; --good-text: #0ca30c;
+      --seq-1: #184f95; --seq-2: #1c5cab; --seq-3: #2a78d6; --seq-4: #5598e7; --seq-5: #86b6ef; --seq-6: #b7d3f6;
+      --accent-wash: rgba(57,135,229,0.16);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --neutral: #6b6a66; --neutral-2: #3a3a37; --neutral-ink: #f0efec;
+    --serious-text: #f0a27f; --good-text: #0ca30c;
+    --seq-1: #184f95; --seq-2: #1c5cab; --seq-3: #2a78d6; --seq-4: #5598e7; --seq-5: #86b6ef; --seq-6: #b7d3f6;
+    --accent-wash: rgba(57,135,229,0.16);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--ink-2); margin: 0; }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+  .card-sub { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; }
+  button, select, input[type=search] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; }
+  button { cursor: pointer; }
+  button:hover { background: var(--surface-2); }
+  button.primary { background: var(--series-1); color: #fff; border-color: transparent; }
+  button.primary:hover { filter: brightness(1.08); }
+  button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; margin-bottom: 12px; }
+  #drop { border: 1.5px dashed var(--axis); border-radius: 12px; padding: 48px 16px; text-align: center; background: var(--surface); color: var(--ink-2); }
+  #drop.over { border-color: var(--series-1); background: var(--accent-wash); }
+  #drop strong { color: var(--ink); display: block; font-size: 16px; margin-bottom: 6px; }
+  #drop code { background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 16px; }
+  .filters label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .filters input[type=search] { min-width: 220px; flex: 1 1 220px; max-width: 380px; }
+
+  .tiles { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .tile { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
+  button.tile:hover { background: var(--surface-2); }
+  .tile[aria-pressed="true"] { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); background: var(--accent-wash); }
+  .tile .label { color: var(--ink-2); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .tile .value { font-size: 30px; font-weight: 600; line-height: 1.15; }
+  .tile .meta { color: var(--muted); font-size: 12px; }
+  .tile.hero .value { font-size: 48px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); margin: 0 0 10px; padding: 0; list-style: none; }
+  .legend li { display: flex; align-items: center; gap: 6px; }
+  .legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .hit { cursor: pointer; }
+  .hit:hover .mark, .hit:focus .mark { filter: brightness(1.12); }
+  .hit:focus { outline: none; }
+  .hit:focus .mark { stroke: var(--ink); stroke-width: 1.5; }
+  .heat-scroll { overflow-x: auto; }
+  .cell { cursor: pointer; }
+  .cell:hover rect, .cell:focus rect { stroke: var(--ink); stroke-width: 1.5; }
+  .cell:focus { outline: none; }
+
+  .seg { display: flex; gap: 2px; height: 28px; margin: 4px 0 10px; }
+  .seg > div { border-radius: 4px; display: flex; align-items: center; padding: 0 8px; font-size: 12px; font-weight: 600; white-space: nowrap; min-width: 0; cursor: pointer; }
+  .seg > div:hover { filter: brightness(1.06); }
+  .seg > div.dim { opacity: 0.35; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; font-weight: 500; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); white-space: nowrap; margin: 0 4px 4px 0; }
+  .chip .k { color: var(--muted); font-size: 11px; }
+  .chip.priv { border-color: var(--serious); }
+  .chip.excess { text-decoration: line-through; text-decoration-color: var(--serious); color: var(--ink-2); }
+  .chips { display: flex; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+  .op { color: var(--serious-text); font-weight: 600; }
+  .ok { color: var(--good-text); font-weight: 600; }
+
+  #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); opacity: 0; transition: opacity .1s; max-width: 320px; }
+  #tip .v { font-size: 14px; font-weight: 600; }
+  #tip .k { color: var(--ink-2); }
+  #tip .hint { color: var(--muted); margin-top: 4px; }
+
+  .table-head { display: flex; flex-wrap: wrap; gap: 8px 12px; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .focus-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-wash); border: 1px solid var(--series-1); border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 13px; max-width: 100%; }
+  .focus-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .focus-chip button { border: 0; background: transparent; padding: 0 6px; border-radius: 999px; font-size: 15px; line-height: 1; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; max-height: 640px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { position: sticky; top: 0; background: var(--surface-2); font-weight: 600; color: var(--ink-2); white-space: nowrap; z-index: 1; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th .arrow { color: var(--muted); margin-left: 4px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.wide { min-width: 200px; max-width: 360px; }
+  td.name { min-width: 170px; }
+  td.name .upn { color: var(--muted); font-size: 12px; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--surface-2); }
+  tr:last-child td { border-bottom: 0; }
+  .detail td { background: var(--surface-2); }
+  .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .mini { font-size: 12px; }
+  .mini td, .mini th { padding: 4px 6px; position: static; }
+  .more { margin-top: 10px; color: var(--ink-2); font-size: 13px; display: flex; gap: 10px; align-items: center; }
+  .banner { border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--border); display: flex; gap: 10px; }
+  .banner .ico { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--warning); color: #0b0b0b; font-weight: 700; font-size: 12px; display: grid; place-items: center; margin-top: 1px; }
+  details.data { margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+  details.data summary { cursor: pointer; }
+  details.data table { margin-top: 8px; }
+  footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
+  footer p { margin: 4px 0; }
+  code.block { display: block; white-space: pre; overflow-x: auto; background: var(--surface-2); padding: 8px; border-radius: 6px; font-size: 12px; margin-top: 8px; }
+
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 640px) {
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tile.hero { grid-column: 1 / -1; }
+    .tile .value { font-size: 26px; } .tile.hero .value { font-size: 40px; }
+    .detail-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Least privilege review</h1>
+      <p class="sub" id="subtitle">Admin activity compared with the Entra roles held at the time</p>
+    </div>
+    <div class="actions">
+      <input type="file" id="file" accept=".csv,text/csv" class="hidden">
+      <button class="primary" id="btnLoad" type="button">Load CSV…</button>
+      <button id="btnSample" type="button">Sample data</button>
+    </div>
+  </header>
+
+  <div id="drop">
+    <strong>Drop the least privilege CSV here</strong>
+    Generate it with <code>.\Get-EntraLeastPrivilegeReport.ps1 -OutputPath .\least-privilege.csv</code>, then drop it here or use <em>Load CSV</em>.<br>
+    The file is read in your browser only; nothing is uploaded.
+  </div>
+
+  <main id="dash" class="hidden">
+    <div id="banners"></div>
+    <div class="filters" role="group" aria-label="Filters">
+      <input type="search" id="fSearch" placeholder="Filter by admin name or UPN" aria-label="Filter admins">
+      <label>Role access
+        <select id="fSource">
+          <option value="all">All</option>
+          <option value="pim">Used PIM activations</option>
+          <option value="standing">Has standing assignments</option>
+        </select>
+      </label>
+    </div>
+
+    <section class="tiles" id="tiles" aria-label="Summary"></section>
+
+    <section class="card">
+      <h2>How admin actions were assessed</h2>
+      <p class="card-sub">Every audited action by the admins in view. Click a part to list those actions.</p>
+      <ul class="legend" id="lgAssess"></ul>
+      <div class="seg" id="segAssess" role="group" aria-label="Actions by assessment"></div>
+    </section>
+
+    <div class="grid2">
+      <section class="card">
+        <h2>Role used vs. role needed</h2>
+        <p class="card-sub">Actions that needed an admin role. Rows: the least-privileged role the admin had active at the time. Columns: the least-privileged role that could do it. Cells off the matching pair are excess privilege. Click a cell to list the actions.</p>
+        <div class="heat-scroll" id="heat"></div>
+        <ul class="legend" id="lgHeat" style="margin-top:10px"></ul>
+        <details class="data"><summary>Show data</summary><div id="tbHeat"></div></details>
+      </section>
+      <section class="card">
+        <h2>Over-privileged activities</h2>
+        <p class="card-sub">Activities most often done with more privilege than needed. Click a bar to list them.</p>
+        <div class="chart" id="chOver"></div>
+        <details class="data"><summary>Show data</summary><div id="tbOver"></div></details>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="table-head">
+        <div><h2>Admins</h2><p class="card-sub" id="admSub" style="margin:0"></p></div>
+      </div>
+      <div class="table-scroll"><table><thead><tr id="admHead"></tr></thead><tbody id="admBody"></tbody></table></div>
+    </section>
+
+    <section class="card">
+      <div class="table-head">
+        <div><h2>Role assignments and PIM activations</h2><p class="card-sub" id="winSub" style="margin:0">Each period a role was active for an admin, and whether it was needed for what they did.</p></div>
+        <label class="muted" style="font-size:13px;display:flex;gap:6px;align-items:center">Show
+          <select id="fWin">
+            <option value="all">All</option>
+            <option value="Over-privileged" selected>Over-privileged</option>
+            <option value="Not used">Not used</option>
+            <option value="Not needed (another role covered these actions)">Not needed</option>
+            <option value="Appropriate">Appropriate</option>
+          </select>
+        </label>
+      </div>
+      <div class="table-scroll"><table><thead><tr id="winHead"></tr></thead><tbody id="winBody"></tbody></table></div>
+    </section>
+
+    <section class="card">
+      <div class="table-head">
+        <div><h2 id="actTitle">Actions</h2><p class="card-sub" id="actSub" style="margin:0"></p></div>
+        <div class="actions">
+          <span id="focusChip"></span>
+          <label class="muted" style="font-size:13px;display:flex;gap:6px;align-items:center">Assessment
+            <select id="fAssess"><option value="needs">Needed a role</option><option value="all">All</option></select>
+          </label>
+          <button type="button" id="btnExport">Export these rows</button>
+        </div>
+      </div>
+      <div class="table-scroll"><table><thead><tr id="actHead"></tr></thead><tbody id="actBody"></tbody></table></div>
+      <div class="more" id="actMore"></div>
+    </section>
+
+    <section class="card" id="unmappedCard">
+      <h2>Unmapped activities</h2>
+      <p class="card-sub">Activities by admins that aren't in <code>LeastPrivilegeActivityMap.csv</code>, so they couldn't be assessed. Add them to the map (Permissions = the resource actions needed, PreferredRoles = Microsoft's least-privileged role) and re-run the script.</p>
+      <div id="unmapped"></div>
+    </section>
+
+    <footer>
+      <p>Entra audit logs don't record which role was used for an action. This report assumes the least-privileged active role that grants the permission was used, so "Over-privileged" means even that role was more than the task needed.</p>
+      <p>"No role needed" covers self-service actions, user consent, and changes to objects the admin owns (based on current ownership). Some roles are limited by target (e.g. Helpdesk Administrator can only reset non-admin passwords), which isn't checked. Scoped (administrative unit) assignments are treated as tenant-wide.</p>
+    </footer>
+  </main>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const fmtInt = new Intl.NumberFormat();
+  const DAY = 86400000;
+
+  const ASSESS = [
+    { key: 'Over-privileged', label: 'Over-privileged', color: 'var(--serious)', ink: '#ffffff' },
+    { key: 'Least privilege', label: 'Least privilege', color: 'var(--good)', ink: '#ffffff' },
+    { key: 'Not covered by an active role', label: 'Not covered by an active role', color: 'var(--warning)', ink: '#0b0b0b' },
+    { key: 'No role needed', label: 'No role needed', color: 'var(--neutral)', ink: 'var(--neutral-ink)' },
+    { key: 'Unmapped', label: 'Unmapped / unknown', color: 'var(--neutral-2)', ink: 'var(--neutral-ink)' },
+  ];
+  const assessKey = (a) => (a === 'Unmapped activity' || a === 'Mapping matches no role' || !a) ? 'Unmapped' : a;
+  const ASSESS_BY = Object.fromEntries(ASSESS.map(a => [a.key, a]));
+  const NEEDS_ROLE = new Set(['Over-privileged', 'Least privilege']);
+  const VERDICTS = {
+    over: { label: 'Over-privileged', color: 'var(--serious)' },
+    unused: { label: 'Unused standing access', color: 'var(--warning)' },
+    ok: { label: 'Least privilege', color: 'var(--good)' },
+    idle: { label: 'No admin activity', color: 'var(--neutral)' },
+  };
+  const WIN_COLOR = { 'Over-privileged': 'var(--serious)', 'Not used': 'var(--warning)', 'Not needed (another role covered these actions)': 'var(--warning)', 'Appropriate': 'var(--good)' };
+
+  let ACTIONS = [], WINDOWS = [], ELIGIBLE = [], ROLES = new Map(), USERS = [], META = {};
+  let focus = null, actPage = 200;
+  let admSort = { key: 'verdict', dir: 1 }, actSort = { key: 'when', dir: -1 }, winSort = { key: 'start', dir: -1 };
+  const expanded = new Set();
+
+  // ---------------------------------------------------------------- CSV ----
+  function parseCsv(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const rows = []; let row = []; let field = ''; let q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; } else field += c; }
+      else if (c === '"') q = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(field); field = ''; rows.push(row); row = []; }
+      else field += c;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    const head = rows.shift() || [];
+    return rows.filter(r => r.length > 1 || r[0]).map(r => { const o = {}; head.forEach((h, i) => o[h.trim()] = (r[i] ?? '').trim()); return o; });
+  }
+  const date = (s) => { if (!s) return null; const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z'); return isNaN(d) ? null : d; };
+  const list = (s) => (s || '').split(';').map(x => x.trim()).filter(Boolean);
+  const fmtDT = (d) => d ? d.toISOString().slice(0, 16).replace('T', ' ') : '';
+  const fmtD = (d) => d ? d.toISOString().slice(0, 10) : '';
+  function fmtDur(a, b) {
+    if (!a || !b) return '';
+    const h = (b - a) / 3600000;
+    return h < 48 ? `${Math.round(h * 10) / 10} h` : `${Math.round(h / 24)} d`;
+  }
+  const isPim = (src) => /PIM activation/.test(src);
+
+  function load(text, source) {
+    const rows = parseCsv(text);
+    if (!rows.length || !('RecordType' in rows[0]) || !('WindowVerdict' in rows[0])) {
+      alert('This does not look like a Get-EntraLeastPrivilegeReport.ps1 CSV (missing RecordType / WindowVerdict columns).');
+      return;
+    }
+    ROLES = new Map(); ACTIONS = []; WINDOWS = []; ELIGIBLE = [];
+    for (const r of rows) {
+      if (r.RecordType === 'Role') ROLES.set(r.RoleName, { name: r.RoleName, priv: /true/i.test(r.RoleIsPrivileged), score: +r.PrivilegeScore || 0 });
+    }
+    rows.forEach((r, i) => {
+      if (r.RecordType === 'Action') {
+        ACTIONS.push({
+          i, userId: r.UserId, upn: r.UserPrincipalName, name: r.UserDisplayName, when: date(r.ActivityDateTime),
+          activity: r.Activity, target: r.TargetName, targetType: r.TargetType, assessment: r.Assessment, akey: assessKey(r.Assessment),
+          detail: r.AssessmentDetail, used: r.RoleUsed, highest: r.HighestActiveRole, least: list(r.LeastPrivilegedRoles),
+          active: r.ActiveRoles, result: r.Result, raw: r,
+          candidates: list(r.CandidateRoles).map(x => { const [n, s] = x.split('|'); return { name: n, score: +s || 0 }; }),
+        });
+      } else if (r.RecordType === 'RoleWindow') {
+        const w = { userId: r.UserId, upn: r.UserPrincipalName, name: r.UserDisplayName, role: r.RoleName, priv: /true/i.test(r.RoleIsPrivileged),
+          source: r.AssignmentSource, scope: r.Scope, start: date(r.WindowStart), end: date(r.WindowEnd),
+          inWin: +r.ActionsInWindow || 0, covered: +r.ActionsCoveredByRole || 0, verdict: r.WindowVerdict, suggest: list(r.SuggestedRoles) };
+        (r.WindowVerdict === 'Eligible' ? ELIGIBLE : WINDOWS).push(w);
+      }
+    });
+    const any = rows.find(r => r.ReportGeneratedUtc);
+    META = {
+      source, generated: any ? date(any.ReportGeneratedUtc) : null, start: any ? date(any.PeriodStartUtc) : null,
+      pim: !rows.some(r => /false/i.test(r.PimDataAvailable || '')),
+    };
+    buildUsers();
+    focus = null; expanded.clear();
+    $('drop').classList.add('hidden'); $('dash').classList.remove('hidden');
+    $('subtitle').textContent = `${source} · ${fmtInt.format(USERS.length)} admins · ${META.start ? fmtD(META.start) + ' to ' + fmtD(META.generated) : ''}`;
+    render();
+  }
+
+  // ---------------------------------------------------- per-admin summary --
+  function scoreOf(name, fallback) { return ROLES.get(name)?.score ?? fallback ?? 0; }
+  function suggestRoles(actions) {
+    // Greedy cover: repeatedly pick the least-privileged role that handles the most remaining actions.
+    let left = actions.filter(a => a.least.length);
+    const chosen = [];
+    while (left.length) {
+      const counts = new Map();
+      left.forEach(a => a.least.forEach(r => counts.set(r, (counts.get(r) || 0) + 1)));
+      const best = [...counts.entries()].sort((x, y) => y[1] - x[1] || scoreOf(x[0]) - scoreOf(y[0]))[0][0];
+      chosen.push(best);
+      left = left.filter(a => !a.least.includes(best));
+    }
+    return chosen;
+  }
+  function buildUsers() {
+    const map = new Map();
+    const get = (id, upn, name) => { if (!map.has(id)) map.set(id, { id, upn, name: name || upn, actions: [], windows: [], eligible: [] }); return map.get(id); };
+    ACTIONS.forEach(a => get(a.userId, a.upn, a.name).actions.push(a));
+    WINDOWS.forEach(w => get(w.userId, w.upn, w.name).windows.push(w));
+    ELIGIBLE.forEach(w => get(w.userId, w.upn, w.name).eligible.push(w));
+    USERS = [...map.values()].map(u => {
+      const roleActs = u.actions.filter(a => NEEDS_ROLE.has(a.assessment));
+      const over = roleActs.filter(a => a.assessment === 'Over-privileged');
+      const suggested = suggestRoles(roleActs);
+      const held = new Map();   // role -> {pim, standing}
+      u.windows.forEach(w => { const h = held.get(w.role) || { role: w.role, pim: 0, standing: false, priv: w.priv }; if (isPim(w.source)) h.pim++; else h.standing = true; held.set(w.role, h); });
+      const standing = u.windows.filter(w => !isPim(w.source));
+      const standingUnused = standing.filter(w => w.verdict === 'Not used' || w.verdict.startsWith('Not needed'));
+      const pimWins = u.windows.filter(w => isPim(w.source));
+      const excess = [...held.keys()].filter(r => !suggested.includes(r));
+      const verdict = over.length ? 'over' : (standingUnused.length && roleActs.length) ? 'over'
+        : standing.length && !roleActs.length ? 'unused' : roleActs.length ? 'ok' : 'idle';
+      return { ...u, roleActs, over, suggested, held: [...held.values()].sort((a, b) => scoreOf(b.role) - scoreOf(a.role)), excess,
+        pimWins, standing, standingUnused, notCovered: u.actions.filter(a => a.assessment === 'Not covered by an active role').length, verdict };
+    });
+  }
+
+  // ------------------------------------------------------------- scoping ---
+  function usersInView() {
+    const q = $('fSearch').value.trim().toLowerCase();
+    const src = $('fSource').value;
+    return USERS.filter(u => {
+      if (q && !(`${u.name} ${u.upn}`.toLowerCase().includes(q))) return false;
+      if (src === 'pim' && !u.pimWins.length) return false;
+      if (src === 'standing' && !u.standing.length) return false;
+      return true;
+    });
+  }
+
+  // ------------------------------------------------------------ helpers ----
+  const tip = $('tip');
+  function showTip(evt, value, label, hint) {
+    tip.replaceChildren();
+    const v = el('div', 'v', value), k = el('div', 'k', label); tip.append(v, k);
+    if (hint) tip.append(el('div', 'hint', hint));
+    let x, y;
+    if (evt.type !== 'focus' && evt.clientX != null) { x = evt.clientX; y = evt.clientY; }
+    else { const b = evt.currentTarget.getBoundingClientRect(); x = b.left + b.width / 2; y = b.top; }
+    tip.style.opacity = '1';
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = x + 12, top = y - th - 12;
+    if (left + tw > innerWidth - 8) left = x - tw - 12;
+    if (top < 8) top = y + 16;
+    tip.style.left = Math.max(8, left) + 'px'; tip.style.top = top + 'px';
+  }
+  const hideTip = () => { tip.style.opacity = '0'; };
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function svgEl(tag, attrs, parent) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.append(e); return e; }
+  function clickable(node, fn) {
+    node.setAttribute('tabindex', '0'); node.setAttribute('role', 'button');
+    node.addEventListener('click', fn);
+    node.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } });
+  }
+  function tipOn(node, fn) { node.addEventListener('pointermove', fn); node.addEventListener('focus', fn); node.addEventListener('pointerleave', hideTip); node.addEventListener('blur', hideTip); }
+  const truncate = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+  function hBar(x, y, w, h) { const r = Math.min(4, h / 2, w); return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h - r}Q${x + w},${y + h} ${x + w - r},${y + h}H${x}Z`; }
+  function pill(label, color) { const p = el('span', 'pill'); const d = el('span', 'dot'); d.style.background = color; p.append(d, document.createTextNode(label)); return p; }
+  function sortHeader(headEl, cols, state, onChange) {
+    headEl.replaceChildren();
+    cols.forEach(c => {
+      const th = el('th', c.get ? 'sortable' : '', c.label); th.scope = 'col';
+      if (c.get) {
+        th.tabIndex = 0;
+        th.setAttribute('aria-sort', state.key === c.key ? (state.dir > 0 ? 'ascending' : 'descending') : 'none');
+        if (state.key === c.key) th.append(el('span', 'arrow', state.dir > 0 ? '▲' : '▼'));
+        const act = () => { if (state.key === c.key) state.dir = -state.dir; else { state.key = c.key; state.dir = c.desc ? -1 : 1; } onChange(); };
+        th.addEventListener('click', act); th.addEventListener('keydown', e => { if (e.key === 'Enter') act(); });
+      }
+      headEl.append(th);
+    });
+  }
+  function sortBy(arr, cols, state) {
+    const c = cols.find(x => x.key === state.key); if (!c) return arr;
+    return [...arr].sort((a, b) => { const x = c.get(a), y = c.get(b); return (x < y ? -1 : x > y ? 1 : 0) * state.dir; });
+  }
+
+  // --------------------------------------------------------------- tiles ---
+  function renderTiles(users, acts) {
+    const t = $('tiles'); t.replaceChildren();
+    const roleActs = acts.filter(a => NEEDS_ROLE.has(a.assessment));
+    const over = roleActs.filter(a => a.assessment === 'Over-privileged');
+    const overUsers = users.filter(u => u.verdict === 'over').length;
+    const pimWins = users.flatMap(u => u.pimWins);
+    const pimOver = pimWins.filter(w => w.verdict === 'Over-privileged').length;
+    const pimUnused = pimWins.filter(w => w.verdict === 'Not used').length;
+    const unusedStanding = users.flatMap(u => u.standing).filter(w => w.verdict === 'Not used' && w.priv).length;
+    const gaOver = over.filter(a => a.used === 'Global Administrator').length;
+    const defs = [
+      { hero: true, label: 'Admin actions done with excess privilege', value: roleActs.length ? `${Math.round(over.length / roleActs.length * 100)}%` : '–', meta: `${fmtInt.format(over.length)} of ${fmtInt.format(roleActs.length)} actions that needed an admin role`, f: { kind: 'assess', value: 'Over-privileged', label: 'Over-privileged actions' } },
+      { label: 'Admins over-privileged', value: fmtInt.format(overUsers), meta: `of ${fmtInt.format(users.length)} admins in view`, color: 'var(--serious)', f: { kind: 'verdict', value: 'over', label: 'Over-privileged admins' } },
+      { label: 'Global Admin used unnecessarily', value: fmtInt.format(gaOver), meta: 'actions a lesser role could do', color: 'var(--serious)', f: { kind: 'used', value: 'Global Administrator', label: 'Over-privileged actions using Global Administrator' } },
+      { label: 'Over-privileged PIM activations', value: fmtInt.format(pimOver), meta: `${fmtInt.format(pimUnused)} more with no admin activity`, color: 'var(--serious)', f: { kind: 'window', value: 'pim-over', label: 'Over-privileged PIM activations' } },
+      { label: 'Unused privileged standing roles', value: fmtInt.format(unusedStanding), meta: 'consider removing or making eligible', color: 'var(--warning)', f: { kind: 'window', value: 'standing-unused', label: 'Unused privileged standing roles' } },
+      { label: 'Not covered by an active role', value: fmtInt.format(acts.filter(a => a.assessment === 'Not covered by an active role').length), meta: 'check ownership or missing history', color: 'var(--warning)', f: { kind: 'assess', value: 'Not covered by an active role', label: 'Actions not covered by an active role' } },
+    ];
+    defs.forEach(d => {
+      const b = el('button', 'tile' + (d.hero ? ' hero' : '')); b.type = 'button';
+      b.setAttribute('aria-pressed', focus && d.f && focus.label === d.f.label ? 'true' : 'false');
+      const l = el('span', 'label'); if (d.color) { const dot = el('span', 'dot'); dot.style.background = d.color; l.append(dot); }
+      l.append(document.createTextNode(d.label));
+      b.append(l, el('span', 'value', d.value), el('span', 'meta', d.meta));
+      b.addEventListener('click', () => setFocus(d.f));
+      t.append(b);
+    });
+  }
+
+  // ---------------------------------------------------- assessment bar ----
+  function renderAssess(acts) {
+    const lg = $('lgAssess'); lg.replaceChildren();
+    ASSESS.forEach(a => { const li = el('li'); const sw = el('span', 'sw'); sw.style.background = a.color; li.append(sw, document.createTextNode(a.label)); lg.append(li); });
+    const seg = $('segAssess'); seg.replaceChildren();
+    const total = acts.length || 1;
+    ASSESS.forEach(a => {
+      const n = acts.filter(x => x.akey === a.key).length; if (!n) return;
+      const pct = n / total * 100;
+      const d = el('div'); d.style.flex = `${n} 1 0`; d.style.background = a.color; d.style.color = a.ink;
+      if (focus && focus.kind === 'assess' && focus.value !== a.key) d.classList.add('dim');
+      d.setAttribute('aria-label', `${a.label}: ${n} actions, ${Math.round(pct)}%`);
+      const label = `${Math.round(pct)}%`;
+      requestAnimationFrame(() => { if (d.clientWidth >= label.length * 8 + 16) d.textContent = label; });
+      tipOn(d, (e) => showTip(e, `${fmtInt.format(n)} actions · ${pct.toFixed(1)}%`, a.label, 'click to list'));
+      clickable(d, () => setFocus({ kind: 'assess', value: a.key, label: a.label }));
+      seg.append(d);
+    });
+  }
+
+  // -------------------------------------------------------------- heatmap --
+  function renderHeat(acts) {
+    const host = $('heat');
+    const ra = acts.filter(a => NEEDS_ROLE.has(a.assessment) && a.used && a.least.length);
+    if (!ra.length) { host.replaceChildren(el('p', 'muted', 'No actions that needed a role.')); $('lgHeat').replaceChildren(); $('tbHeat').replaceChildren(); return; }
+    const need = (a) => a.least.includes(a.used) ? a.used : a.least[0];
+    const rowsSet = [...new Set(ra.map(a => a.used))].sort((x, y) => scoreOf(y) - scoreOf(x));
+    const colsSet = [...new Set(ra.map(need))].sort((x, y) => scoreOf(y) - scoreOf(x));
+    const counts = new Map(); ra.forEach(a => { const k = a.used + '|' + need(a); counts.set(k, (counts.get(k) || 0) + 1); });
+    const max = Math.max(...counts.values());
+    const steps = ['--seq-1', '--seq-2', '--seq-3', '--seq-4', '--seq-5', '--seq-6'];
+    const stepOf = (n) => Math.min(5, Math.floor(Math.sqrt(n / max) * 6 - 1e-9));
+    const avail = Math.max(300, host.clientWidth);
+    const labelW = Math.min(190, avail * 0.36);
+    const cell = Math.max(34, Math.min(64, Math.floor((avail - labelW - 90) / colsSet.length)));
+    const headH = 130;
+    const W = labelW + colsSet.length * cell + 96, H = headH + rowsSet.length * cell + 4;
+    const svg = svgEl('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Role used versus role needed heatmap' });
+    colsSet.forEach((c, j) => {
+      const x = labelW + j * cell + cell / 2;
+      const t = svgEl('text', { x, y: headH - 8, 'font-size': 11, fill: 'var(--ink-2)', transform: `rotate(-40 ${x} ${headH - 8})` }, svg);
+      t.textContent = truncate(c, 24);
+      svgEl('title', {}, t).textContent = c;
+    });
+    svgEl('text', { x: labelW, y: 12, 'font-size': 11, fill: 'var(--muted)' }, svg).textContent = 'Role needed →';
+    rowsSet.forEach((r, i) => {
+      const y = headH + i * cell;
+      const t = svgEl('text', { x: labelW - 8, y: y + cell / 2 + 4, 'text-anchor': 'end', 'font-size': 12, fill: 'var(--ink-2)' }, svg);
+      t.textContent = truncate(r, Math.floor((labelW - 12) / 6.4));
+      colsSet.forEach((c, j) => {
+        const x = labelW + j * cell, n = counts.get(r + '|' + c) || 0;
+        if (!n) { svgEl('rect', { x: x + 1, y: y + 1, width: cell - 2, height: cell - 2, rx: 3, fill: 'none', stroke: 'var(--grid)' }, svg); return; }
+        const st = stepOf(n);
+        const g = svgEl('g', { class: 'cell', 'aria-label': `${r} used where ${c} was enough: ${n} actions` }, svg);
+        svgEl('rect', { x: x + 1, y: y + 1, width: cell - 2, height: cell - 2, rx: 3, fill: `var(${steps[st]})` }, g);
+        if (r === c) svgEl('rect', { x: x + 4, y: y + 4, width: cell - 8, height: cell - 8, rx: 2, fill: 'none', stroke: 'var(--good)', 'stroke-width': 2 }, g);
+        const dark = getComputedStyle(document.documentElement).colorScheme === 'dark';
+        const txt = svgEl('text', { x: x + cell / 2, y: y + cell / 2 + 4, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600,
+          fill: (dark ? st < 3 : st >= 3) ? '#ffffff' : '#0b0b0b' }, g);
+        txt.textContent = fmtInt.format(n);
+        tipOn(g, (e) => showTip(e, `${fmtInt.format(n)} actions`, r === c ? `Done with ${r}, the least-privileged role` : `Done with ${r}; ${c} would have been enough`, 'click to list'));
+        clickable(g, () => setFocus({ kind: 'pair', used: r, need: c, label: r === c ? `Actions done with ${r} (appropriate)` : `${r} used where ${c} was enough` }));
+      });
+    });
+    host.replaceChildren(svg);
+    const lg = $('lgHeat'); lg.replaceChildren();
+    const li1 = el('li'); li1.append(el('span', '', 'Fewer')); steps.forEach(s => { const sw = el('span', 'sw'); sw.style.background = `var(${s})`; li1.append(sw); }); li1.append(el('span', '', 'More actions')); lg.append(li1);
+    const li2 = el('li'); const sw2 = el('span', 'sw'); sw2.style.cssText = 'background:transparent;box-shadow:inset 0 0 0 2px var(--good)'; li2.append(sw2, document.createTextNode('Role used was the least-privileged one')); lg.append(li2);
+    const t = el('table'); const tr = el('tr'); ['Role used', 'Role needed', 'Actions'].forEach(h => tr.append(el('th', '', h)));
+    const th = el('thead'); th.append(tr); t.append(th); const tb = el('tbody');
+    [...counts.entries()].sort((a, b) => b[1] - a[1]).forEach(([k, n]) => { const [u, c] = k.split('|'); const r = el('tr'); r.append(el('td', '', u), el('td', '', c), el('td', 'num', fmtInt.format(n))); tb.append(r); });
+    t.append(tb); $('tbHeat').replaceChildren(t);
+  }
+
+  // --------------------------------------------------------- over bars ----
+  function renderOver(acts) {
+    const host = $('chOver');
+    const counts = new Map();
+    acts.filter(a => a.assessment === 'Over-privileged').forEach(a => counts.set(a.activity, (counts.get(a.activity) || 0) + 1));
+    const items = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+    if (!items.length) { host.replaceChildren(el('p', 'muted', 'No over-privileged actions.')); $('tbOver').replaceChildren(); return; }
+    const W = Math.max(280, host.clientWidth), labelW = Math.min(230, W * 0.48), barH = 16, gap = 10;
+    const H = items.length * (barH + gap), plotW = W - labelW - 40, max = Math.max(...items.map(i => i[1]));
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': items.map(i => `${i[0]} ${i[1]}`).join(', ') });
+    svgEl('line', { x1: labelW, x2: labelW, y1: 0, y2: H - gap + 2, stroke: 'var(--axis)' }, svg);
+    items.forEach(([name, n], i) => {
+      const y = i * (barH + gap), w = Math.max(2, plotW * n / max);
+      const g = svgEl('g', { class: 'hit', 'aria-label': `${name}: ${n}` }, svg);
+      if (focus && focus.kind === 'activity' && focus.value !== name) g.setAttribute('opacity', '0.4');
+      svgEl('rect', { x: 0, y: y - gap / 2, width: W, height: barH + gap, fill: 'transparent' }, g);
+      svgEl('text', { x: labelW - 8, y: y + barH / 2 + 4, 'text-anchor': 'end', 'font-size': 12, fill: 'var(--ink-2)' }, g).textContent = truncate(name, Math.floor((labelW - 10) / 6.3));
+      svgEl('path', { d: hBar(labelW + 1, y, w, barH), fill: 'var(--series-1)', class: 'mark' }, g);
+      svgEl('text', { x: labelW + 1 + w + 6, y: y + barH / 2 + 4, 'font-size': 12, 'font-weight': 600, fill: 'var(--ink)' }, g).textContent = fmtInt.format(n);
+      const used = [...new Set(acts.filter(a => a.assessment === 'Over-privileged' && a.activity === name).map(a => a.used))].join(', ');
+      tipOn(g, (e) => showTip(e, `${fmtInt.format(n)} actions`, name, `Done with: ${used}`));
+      clickable(g, () => setFocus({ kind: 'activity', value: name, label: `Over-privileged: ${name}` }));
+    });
+    host.replaceChildren(svg);
+    const t = el('table'); const tr = el('tr'); ['Activity', 'Over-privileged actions'].forEach(h => tr.append(el('th', '', h)));
+    const th = el('thead'); th.append(tr); t.append(th); const tb = el('tbody');
+    items.forEach(([n, c]) => { const r = el('tr'); r.append(el('td', '', n), el('td', 'num', fmtInt.format(c))); tb.append(r); });
+    t.append(tb); $('tbOver').replaceChildren(t);
+  }
+
+  // -------------------------------------------------------- admin table ---
+  const VORDER = { over: 0, unused: 1, ok: 2, idle: 3 };
+  function renderAdmins(users) {
+    $('admSub').textContent = `${fmtInt.format(users.length)} admins. Suggested roles are the smallest set of least-privileged roles that would cover everything they did; struck-through roles weren't needed. Click a row for details.`;
+    const cols = [
+      { key: 'verdict', label: 'Verdict', get: u => VORDER[u.verdict] },
+      { key: 'name', label: 'Admin', get: u => u.name.toLowerCase() },
+      { key: 'held', label: 'Roles held in period', get: u => -Math.max(0, ...u.held.map(h => scoreOf(h.role))), desc: false },
+      { key: 'acts', label: 'Admin actions', get: u => u.roleActs.length, desc: true },
+      { key: 'over', label: 'Over-privileged', get: u => u.over.length, desc: true },
+      { key: 'sugg', label: 'Suggested roles' },
+    ];
+    sortHeader($('admHead'), cols, admSort, () => renderAdmins(users));
+    const body = $('admBody'); body.replaceChildren();
+    sortBy(users, cols, admSort).forEach(u => {
+      const tr = el('tr', 'clickable'); tr.tabIndex = 0;
+      const v = el('td'); v.append(pill(VERDICTS[u.verdict].label, VERDICTS[u.verdict].color)); tr.append(v);
+      const n = el('td', 'name'); n.append(el('div', '', u.name), el('div', 'upn', u.upn)); tr.append(n);
+      const h = el('td', 'wide'); const hc = el('div', 'chips');
+      u.held.forEach(r => {
+        const c = el('span', 'chip' + (r.priv ? ' priv' : '') + (u.excess.includes(r.role) && (u.roleActs.length || !r.pim) ? ' excess' : ''));
+        c.append(document.createTextNode(r.role));
+        c.append(el('span', 'k', r.standing ? (r.pim ? `standing + ${r.pim}× PIM` : 'standing') : `${r.pim}× PIM`));
+        c.title = (r.priv ? 'Privileged role. ' : '') + (u.excess.includes(r.role) ? 'Not needed for any action in the period.' : '');
+        hc.append(c);
+      });
+      const unactivated = u.eligible.filter(e => !u.held.some(h => h.role === e.role));
+      unactivated.forEach(e => { const c = el('span', 'chip'); c.append(document.createTextNode(e.role), el('span', 'k', 'eligible, not activated')); hc.append(c); });
+      if (!hc.childNodes.length) hc.append(el('span', 'muted', '—'));
+      h.append(hc); tr.append(h);
+      tr.append(el('td', 'num', u.roleActs.length ? fmtInt.format(u.roleActs.length) : '–'));
+      const o = el('td', 'num'); if (u.over.length) { o.append(el('span', 'op', fmtInt.format(u.over.length))); o.append(el('div', 'muted', `${Math.round(u.over.length / u.roleActs.length * 100)}%`)); } else o.textContent = '–'; tr.append(o);
+      const s = el('td', 'wide'); const sc = el('div', 'chips');
+      u.suggested.forEach(r => sc.append(el('span', 'chip', r)));
+      if (!u.suggested.length) sc.append(el('span', 'muted', u.actions.length ? 'No admin role needed for their activity' : 'No activity in the period'));
+      s.append(sc); tr.append(s);
+      const toggle = () => { expanded.has(u.id) ? expanded.delete(u.id) : expanded.add(u.id); renderAdmins(users); };
+      tr.addEventListener('click', toggle); tr.addEventListener('keydown', e => { if (e.key === 'Enter') toggle(); });
+      tr.setAttribute('aria-expanded', expanded.has(u.id) ? 'true' : 'false');
+      body.append(tr);
+      if (expanded.has(u.id)) body.append(adminDetail(u, cols.length));
+    });
+    if (!users.length) { const tr = el('tr'); const td = el('td', 'muted', 'No admins match.'); td.colSpan = cols.length; tr.append(td); body.append(tr); }
+  }
+  function adminDetail(u, span) {
+    const tr = el('tr', 'detail'); const td = el('td'); td.colSpan = span;
+    const grid = el('div', 'detail-grid');
+    const left = el('div'); left.append(el('h3', '', `Role periods (${u.windows.length})`));
+    const t = el('table', 'mini'); const hr = el('tr'); ['Role', 'How', 'From', 'For', 'Used for', 'Verdict'].forEach(h => hr.append(el('th', '', h)));
+    const th = el('thead'); th.append(hr); t.append(th); const tb = el('tbody');
+    [...u.windows].sort((a, b) => (b.start || 0) - (a.start || 0)).forEach(w => {
+      const r = el('tr');
+      r.append(el('td', '', w.role), el('td', '', w.source), el('td', 'nowrap', w.start ? fmtDT(w.start) : 'before period'),
+        el('td', 'nowrap', w.end ? fmtDur(w.start, w.end) : 'ongoing'), el('td', 'num', `${w.covered} actions`));
+      const v = el('td'); v.append(pill(w.verdict.startsWith('Not needed') ? 'Not needed' : w.verdict, WIN_COLOR[w.verdict] || 'var(--neutral)'));
+      if (w.suggest.length) v.append(el('div', 'muted', 'Use: ' + w.suggest.join(', ')));
+      r.append(v); tb.append(r);
+    });
+    t.append(tb); left.append(t);
+    const right = el('div');
+    const byAct = new Map();
+    u.actions.forEach(a => { const k = a.activity + '|' + a.akey; const e = byAct.get(k) || { activity: a.activity, akey: a.akey, n: 0, used: new Set(), least: new Set() }; e.n++; if (a.used) e.used.add(a.used); a.least.forEach(x => e.least.add(x)); byAct.set(k, e); });
+    right.append(el('h3', '', `What they did (${u.actions.length} actions)`));
+    const t2 = el('table', 'mini'); const hr2 = el('tr'); ['Activity', 'Count', 'Assessment', 'Role used → needed'].forEach(h => hr2.append(el('th', '', h)));
+    const th2 = el('thead'); th2.append(hr2); t2.append(th2); const tb2 = el('tbody');
+    [...byAct.values()].sort((a, b) => b.n - a.n).forEach(e => {
+      const r = el('tr'); r.append(el('td', '', e.activity), el('td', 'num', e.n));
+      const a = el('td'); a.append(pill(ASSESS_BY[e.akey].label, ASSESS_BY[e.akey].color)); r.append(a);
+      r.append(el('td', '', e.used.size ? `${[...e.used].join(', ')} → ${[...e.least].join(' / ')}` : '—'));
+      tb2.append(r);
+    });
+    t2.append(tb2); right.append(t2);
+    const b = el('button', '', 'List these actions'); b.type = 'button'; b.style.marginTop = '8px';
+    b.addEventListener('click', (e) => { e.stopPropagation(); setFocus({ kind: 'user', value: u.id, label: `Actions by ${u.name}` }); });
+    right.append(b);
+    grid.append(left, right); td.append(grid); tr.append(td); return tr;
+  }
+
+  // ------------------------------------------------------- windows table --
+  function renderWindows(users) {
+    const sel = $('fWin').value;
+    let wins = users.flatMap(u => u.windows);
+    if (focus && focus.kind === 'window') wins = wins.filter(w => focus.value === 'pim-over' ? isPim(w.source) && w.verdict === 'Over-privileged' : !isPim(w.source) && w.verdict === 'Not used' && w.priv);
+    else if (sel !== 'all') wins = wins.filter(w => w.verdict === sel);
+    const cols = [
+      { key: 'user', label: 'Admin', get: w => w.name.toLowerCase() },
+      { key: 'role', label: 'Role', get: w => -scoreOf(w.role) },
+      { key: 'src', label: 'How', get: w => w.source },
+      { key: 'start', label: 'Active from', get: w => w.start ? +w.start : 0, desc: true },
+      { key: 'dur', label: 'For', get: w => (w.end ? +w.end : Infinity) - (w.start ? +w.start : 0) },
+      { key: 'acts', label: 'Admin actions', get: w => w.covered, desc: true },
+      { key: 'verdict', label: 'Verdict', get: w => w.verdict },
+    ];
+    sortHeader($('winHead'), cols, winSort, () => renderWindows(users));
+    const body = $('winBody'); body.replaceChildren();
+    const sorted = sortBy(wins, cols, winSort);
+    sorted.slice(0, 300).forEach(w => {
+      const tr = el('tr');
+      const n = el('td', 'name'); n.append(el('div', '', w.name), el('div', 'upn', w.upn)); tr.append(n);
+      const r = el('td'); r.append(document.createTextNode(w.role)); if (w.priv) r.append(el('div', 'muted', 'privileged')); tr.append(r);
+      tr.append(el('td', '', w.source + (w.scope && w.scope !== '/' ? ` (scope ${w.scope})` : '')));
+      tr.append(el('td', 'nowrap', w.start ? fmtDT(w.start) : 'before period'), el('td', 'nowrap', w.end ? fmtDur(w.start, w.end) : 'ongoing'));
+      tr.append(el('td', 'num', w.covered ? `${w.covered} of ${w.inWin}` : (w.inWin ? `0 of ${w.inWin}` : '–')));
+      const v = el('td'); v.append(pill(w.verdict.startsWith('Not needed') ? 'Not needed' : w.verdict, WIN_COLOR[w.verdict] || 'var(--neutral)'));
+      if (w.suggest.length) v.append(el('div', 'muted', 'Would suffice: ' + w.suggest.join(', ')));
+      tr.append(v); body.append(tr);
+    });
+    if (!sorted.length) { const tr = el('tr'); const td = el('td', 'muted', 'None.'); td.colSpan = cols.length; tr.append(td); body.append(tr); }
+    $('winSub').textContent = `${fmtInt.format(sorted.length)} role periods${sorted.length > 300 ? ' (first 300 shown)' : ''}. Each period a role was active for an admin, and whether it was needed for what they did.`;
+  }
+
+  // ------------------------------------------------------- actions table --
+  function focusMatch(a, users) {
+    if (!focus) return true;
+    switch (focus.kind) {
+      case 'assess': return a.akey === focus.value;
+      case 'verdict': return users.find(u => u.id === a.userId)?.verdict === focus.value && a.assessment === 'Over-privileged';
+      case 'used': return a.used === focus.value && a.assessment === 'Over-privileged';
+      case 'activity': return a.activity === focus.value && a.assessment === 'Over-privileged';
+      case 'pair': return a.used === focus.used && NEEDS_ROLE.has(a.assessment) && (a.least.includes(a.used) ? a.used : a.least[0]) === focus.need;
+      case 'user': return a.userId === focus.value;
+      case 'window': return false;
+    }
+    return true;
+  }
+  let lastActs = [];
+  function renderActions(acts, users) {
+    let rows = acts.filter(a => focusMatch(a, users));
+    if (!focus && $('fAssess').value === 'needs') rows = rows.filter(a => a.akey !== 'No role needed');
+    if (focus && focus.kind === 'window') rows = [];
+    lastActs = rows;
+    $('actTitle').textContent = focus ? focus.label : 'Actions';
+    $('actSub').textContent = focus && focus.kind === 'window' ? 'See the role periods table above.' : `${fmtInt.format(rows.length)} actions`;
+    const chip = $('focusChip'); chip.replaceChildren();
+    if (focus) {
+      const c = el('span', 'focus-chip'); c.append(el('span', '', focus.label));
+      const x = el('button', '', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Clear selection'); x.addEventListener('click', () => setFocus(null));
+      c.append(x); chip.append(c);
+    }
+    const cols = [
+      { key: 'when', label: 'When (UTC)', get: a => +a.when || 0, desc: true },
+      { key: 'user', label: 'Admin', get: a => (a.name || a.upn).toLowerCase() },
+      { key: 'act', label: 'Activity', get: a => a.activity },
+      { key: 'target', label: 'Target', get: a => a.target || '' },
+      { key: 'assess', label: 'Assessment', get: a => ASSESS.findIndex(x => x.key === a.akey) },
+      { key: 'used', label: 'Role used', get: a => -scoreOf(a.used, -1) },
+      { key: 'need', label: 'Least-privileged role', get: a => a.least.join() },
+    ];
+    sortHeader($('actHead'), cols, actSort, () => renderActions(acts, users));
+    const body = $('actBody'); body.replaceChildren();
+    const sorted = sortBy(rows, cols, actSort);
+    const frag = document.createDocumentFragment();
+    sorted.slice(0, actPage).forEach(a => {
+      const tr = el('tr');
+      tr.append(el('td', 'nowrap', fmtDT(a.when)));
+      const n = el('td', 'name'); n.append(el('div', '', a.name || a.upn), el('div', 'upn', a.upn)); tr.append(n);
+      tr.append(el('td', '', a.activity), el('td', '', a.target || ''));
+      const s = el('td', 'wide'); s.append(pill(ASSESS_BY[a.akey].label, ASSESS_BY[a.akey].color)); if (a.detail) s.append(el('div', 'muted', a.detail)); tr.append(s);
+      const u = el('td', a.assessment === 'Over-privileged' ? 'op' : '', a.used || '—'); if (!a.used) u.classList.add('muted'); tr.append(u);
+      tr.append(el('td', '', a.least.join(' / ') || '—'));
+      frag.append(tr);
+    });
+    body.append(frag);
+    if (!sorted.length) { const tr = el('tr'); const td = el('td', 'muted', focus && focus.kind === 'window' ? 'Role periods are listed in the table above.' : 'No actions match.'); td.colSpan = cols.length; tr.append(td); body.append(tr); }
+    const more = $('actMore'); more.replaceChildren();
+    if (sorted.length > actPage) {
+      more.append(el('span', '', `Showing ${fmtInt.format(actPage)} of ${fmtInt.format(sorted.length)}`));
+      const b = el('button', '', 'Show more'); b.type = 'button'; b.addEventListener('click', () => { actPage += 500; renderActions(acts, users); }); more.append(b);
+    }
+  }
+
+  function renderUnmapped(acts) {
+    const counts = new Map();
+    acts.filter(a => a.akey === 'Unmapped').forEach(a => { const e = counts.get(a.activity) || { n: 0, why: a.assessment, svc: a.raw.Service }; e.n++; counts.set(a.activity, e); });
+    const host = $('unmapped'); host.replaceChildren();
+    $('unmappedCard').classList.toggle('hidden', !counts.size);
+    if (!counts.size) return;
+    const t = el('table'); const hr = el('tr'); ['Activity', 'Service', 'Actions', 'Reason'].forEach(h => hr.append(el('th', '', h)));
+    const th = el('thead'); th.append(hr); t.append(th); const tb = el('tbody');
+    const sorted = [...counts.entries()].sort((a, b) => b[1].n - a[1].n);
+    sorted.forEach(([k, e]) => { const r = el('tr'); r.append(el('td', '', k), el('td', '', e.svc || ''), el('td', 'num', fmtInt.format(e.n)), el('td', 'muted', e.why)); tb.append(r); });
+    t.append(tb);
+    const wrap = el('div', 'table-scroll'); wrap.style.maxHeight = '320px'; wrap.append(t); host.append(wrap);
+    const tmpl = sorted.filter(([, e]) => e.why === 'Unmapped activity').map(([k]) => `"${k.replace(/"/g, '""')}",*,<permissions>,<least-privileged role>,,`).join('\n');
+    if (tmpl) {
+      const d = el('details', 'data'); d.append(el('summary', '', 'Template rows for the activity map'));
+      d.append(el('code', 'block', tmpl)); host.append(d);
+    }
+  }
+
+  function renderBanners() {
+    const b = $('banners'); b.replaceChildren();
+    const add = (msg) => { const d = el('div', 'banner'); d.append(el('span', 'ico', '!'), el('div', '', msg)); b.append(d); };
+    if (!META.pim) add('PIM history wasn\'t available when this report was generated, so current role assignments were treated as active for the whole period. PIM activations aren\'t shown.');
+  }
+
+  function setFocus(f) {
+    const same = focus && f && JSON.stringify(focus) === JSON.stringify(f);
+    focus = same ? null : f; actPage = 200;
+    render();
+    if (focus) (focus.kind === 'window' ? $('winHead') : $('actTitle')).scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  function render() {
+    if (!USERS.length && !ACTIONS.length) return;
+    hideTip();
+    const users = usersInView();
+    const ids = new Set(users.map(u => u.id));
+    const acts = ACTIONS.filter(a => ids.has(a.userId));
+    renderBanners(); renderTiles(users, acts); renderAssess(acts); renderHeat(acts); renderOver(acts);
+    renderAdmins(users); renderWindows(users); renderActions(acts, users); renderUnmapped(acts);
+  }
+
+  function exportRows() {
+    if (!lastActs.length) return;
+    const cols = Object.keys(lastActs[0].raw).filter(c => !/^(Role(Name|Id|IsPrivileged|IsBuiltIn)|AssignmentSource|Scope|Window.*|ActionsInWindow|ActionsCoveredByRole|SuggestedRoles|PrivilegeScore)$/.test(c));
+    const esc = (v) => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    const lines = [cols.join(',')]; lastActs.forEach(a => lines.push(cols.map(c => esc(a.raw[c] ?? '')).join(',')));
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'least-privilege-actions.csv'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ------------------------------------------------------------- sample ----
+  function sampleCsv() {
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const pick = (a) => a[Math.floor(rnd() * a.length)];
+    const now = Date.UTC(2026, 10, 7, 8, 0, 0), start = now - 30 * DAY;
+    const iso = (t) => t == null ? '' : new Date(t).toISOString().slice(0, 19) + 'Z';
+    const R = {
+      'Global Administrator': [1e9, 1], 'Privileged Role Administrator': [100060, 1], 'Privileged Authentication Administrator': [100018, 1],
+      'Security Administrator': [100075, 1], 'Application Administrator': [100080, 1], 'Cloud Application Administrator': [100062, 1],
+      'Authentication Administrator': [100014, 1], 'User Administrator': [100055, 1], 'Helpdesk Administrator': [100004, 1],
+      'Password Administrator': [100001, 1], 'Conditional Access Administrator': [100013, 1], 'Intune Administrator': [100090, 1],
+      'Cloud Device Administrator': [100017, 1], 'Groups Administrator': [21, 0], 'License Administrator': [6, 0], 'Exchange Administrator': [140, 0],
+    };
+    const GA = 'Global Administrator';
+    const A = {
+      'Add member to group': { c: ['Groups Administrator', 'User Administrator', GA], l: ['Groups Administrator'], t: 'Group' },
+      'Remove member from group': { c: ['Groups Administrator', 'User Administrator', GA], l: ['Groups Administrator'], t: 'Group' },
+      'Add owner to group': { c: ['Groups Administrator', 'User Administrator', GA], l: ['Groups Administrator'], t: 'Group' },
+      'Add group': { c: ['Groups Administrator', 'User Administrator', GA], l: ['Groups Administrator'], t: 'Group' },
+      'Add user': { c: ['User Administrator', GA], l: ['User Administrator'], t: 'User' },
+      'Update user': { c: ['User Administrator', 'Authentication Administrator', 'Privileged Authentication Administrator', GA], l: ['User Administrator'], t: 'User' },
+      'Disable account': { c: ['User Administrator', 'Authentication Administrator', 'Privileged Authentication Administrator', GA], l: ['User Administrator'], t: 'User' },
+      'Reset user password': { c: ['Password Administrator', 'Helpdesk Administrator', 'Authentication Administrator', 'User Administrator', 'Privileged Authentication Administrator', GA], l: ['Helpdesk Administrator', 'Password Administrator'], t: 'User' },
+      'Change user license': { c: ['License Administrator', 'User Administrator', GA], l: ['License Administrator'], t: 'User' },
+      'Update conditional access policy': { c: ['Conditional Access Administrator', 'Security Administrator', GA], l: ['Conditional Access Administrator'], t: 'Policy' },
+      'Add conditional access policy': { c: ['Conditional Access Administrator', 'Security Administrator', GA], l: ['Conditional Access Administrator'], t: 'Policy' },
+      'Update application': { c: ['Cloud Application Administrator', 'Application Administrator', GA], l: ['Cloud Application Administrator'], t: 'Application' },
+      'Update application – Certificates and secrets management ': { c: ['Cloud Application Administrator', 'Application Administrator', GA], l: ['Cloud Application Administrator'], t: 'Application' },
+      'Consent to application': { c: ['Cloud Application Administrator', 'Application Administrator', 'Privileged Role Administrator', GA], l: ['Cloud Application Administrator'], t: 'ServicePrincipal' },
+      'Add member to role': { c: ['Privileged Role Administrator', GA], l: ['Privileged Role Administrator'], t: 'Role' },
+      'Admin registered security info': { c: ['Authentication Administrator', 'Privileged Authentication Administrator', GA], l: ['Authentication Administrator'], t: 'User' },
+      'Read BitLocker key': { c: ['Helpdesk Administrator', 'Cloud Device Administrator', 'Security Administrator', GA], l: ['Helpdesk Administrator', 'Cloud Device Administrator'], t: 'Device' },
+      'Delete device': { c: ['Cloud Device Administrator', 'Intune Administrator', GA], l: ['Cloud Device Administrator'], t: 'Device' },
+    };
+    const NOROLE = ['Add member to role completed (PIM activation)', 'User registered security info'];
+    const UNMAPPED = ['Update external user flow', 'Create access review', 'Update tenant default settings for cross-tenant sync'];
+    const targets = { Group: ['Finance Team', 'Sales - UK', 'All Staff', 'Project Falcon', 'IT Support'], User: ['Joe Bloggs', 'Ann Smith', 'Raj Patel', 'Mia Chen', 'New Starter'],
+      Policy: ['CA001 Require MFA', 'CA007 Compliant devices'], Application: ['Payroll API', 'HR Portal'], ServicePrincipal: ['Miro', 'Zoom'], Role: ['Groups Administrator', 'User Administrator'], Device: ['LAPTOP-0142', 'LAPTOP-0377'] };
+    const people = [
+      { n: 'Alice Morgan', u: 'alice.morgan', standing: [], elig: [GA], act: [GA, 6, 6], tasks: ['Add member to group', 'Add member to group', 'Remove member from group', 'Reset user password', 'Update user', 'Add owner to group'] },
+      { n: 'Bob Patel', u: 'bob.patel', standing: ['User Administrator', 'Groups Administrator'], tasks: ['Add member to group', 'Add user', 'Update user', 'Disable account', 'Remove member from group', 'Add group'], k: 40 },
+      { n: 'Carol Nguyen', u: 'carol.nguyen', standing: ['Privileged Role Administrator'], group: 'Tier0 Role Group', tasks: ['Add member to role'], k: 6 },
+      { n: 'Dave Wilson', u: 'dave.wilson', standing: [GA], tasks: ['Add member to group', 'Change user license', 'Update application'], k: 9 },
+      { n: 'Erin Brooks', u: 'erin.brooks', standing: [], elig: ['Security Administrator', 'Conditional Access Administrator'], act: ['Security Administrator', 4, 4], tasks: ['Update conditional access policy', 'Update conditional access policy', 'Add conditional access policy'] },
+      { n: 'Frank Osei', u: 'frank.osei', standing: ['Helpdesk Administrator'], tasks: ['Reset user password', 'Read BitLocker key'], k: 55 },
+      { n: 'Grace Kim', u: 'grace.kim', standing: ['Cloud Application Administrator'], tasks: ['Update application', 'Consent to application', 'Update application – Certificates and secrets management '], k: 18 },
+      { n: 'Heidi Larsen', u: 'heidi.larsen', standing: ['Application Administrator'], elig: [GA], tasks: ['Update application', 'Update application – Certificates and secrets management '], k: 14 },
+      { n: 'Ivan Petrov', u: 'ivan.petrov', standing: ['Intune Administrator'], tasks: [], k: 0 },
+      { n: 'Judy Alvarez', u: 'judy.alvarez', standing: ['User Administrator'], tasks: ['Change user license', 'Change user license', 'Update user', 'Add user'], k: 30 },
+      { n: 'Ken Sato', u: 'ken.sato', standing: [], elig: ['Privileged Role Administrator'], act: ['Privileged Role Administrator', 2, 0], tasks: [] },
+      { n: 'Break Glass 1', u: 'bg1', standing: [GA], tasks: [], k: 0 },
+      { n: 'Liam Reid', u: 'liam.reid', standing: [], elig: [GA, 'User Administrator'], act: ['User Administrator', 3, 5], act2: [GA, 1, 3], tasks: ['Add user', 'Update user', 'Admin registered security info', 'Add member to group'] },
+    ];
+    const head = ['RecordType', 'UserId', 'UserPrincipalName', 'UserDisplayName', 'ActivityDateTime', 'Activity', 'Category', 'Service', 'Result', 'TargetName', 'TargetType', 'TargetId', 'RequiredPermissions', 'Assessment', 'AssessmentDetail', 'ActiveRoles', 'HighestActiveRole', 'RoleUsed', 'CoveringRoles', 'LeastPrivilegedRoles', 'CandidateRoles', 'RoleName', 'RoleId', 'RoleIsPrivileged', 'AssignmentSource', 'Scope', 'WindowStart', 'WindowEnd', 'ActionsInWindow', 'ActionsCoveredByRole', 'WindowVerdict', 'SuggestedRoles', 'RoleIsBuiltIn', 'PrivilegeScore', 'PimDataAvailable', 'PeriodStartUtc', 'ReportGeneratedUtc'];
+    const rows = [];
+    const row = (o) => rows.push(head.map(h => o[h] ?? ''));
+    const common = { PimDataAvailable: 'True', PeriodStartUtc: iso(start), ReportGeneratedUtc: iso(now) };
+    for (const p of people) {
+      const id = 'u-' + p.u, upn = p.u + '@contoso.com';
+      const wins = [];
+      p.standing.forEach(r => wins.push({ role: r, s: null, e: null, src: 'Permanent assignment' + (p.group ? ` via group ${p.group}` : '') }));
+      for (const a of [p.act, p.act2].filter(Boolean)) {
+        for (let i = 0; i < a[1]; i++) { const s = start + Math.floor(rnd() * 28) * DAY + (8 + Math.floor(rnd() * 4)) * 3600000; wins.push({ role: a[0], s, e: s + pick([2, 4, 8]) * 3600000, src: 'PIM activation', tasksPer: a[2] }); }
+      }
+      // actions
+      const acts = [];
+      const addAct = (t, when) => acts.push({ act: t, when });
+      wins.filter(w => w.src === 'PIM activation').forEach(w => {
+        addAct(NOROLE[0], w.s);
+        for (let i = 0; i < w.tasksPer; i++) addAct(pick(p.tasks.length ? p.tasks : ['Update user']), w.s + rnd() * (w.e - w.s));
+      });
+      for (let i = 0; i < (p.k || 0); i++) addAct(pick(p.tasks), start + rnd() * (now - start));
+      if (p.tasks.length && rnd() < 0.6) addAct(pick(UNMAPPED), start + rnd() * (now - start));
+      if (rnd() < 0.5) addAct(NOROLE[1], start + rnd() * (now - start));
+      // assess
+      const recs = acts.map(x => {
+        const active = wins.filter(w => (w.s == null || w.s <= x.when) && (w.e == null || w.e > x.when));
+        const base = { ...common, RecordType: 'Action', UserId: id, UserPrincipalName: upn, UserDisplayName: p.n, ActivityDateTime: iso(x.when), Activity: x.act, Category: 'Core Directory', Service: 'Core Directory', Result: 'success',
+          ActiveRoles: active.map(w => `${w.role} [${w.src}]`).join('; '), HighestActiveRole: active.map(w => w.role).sort((a, b) => R[b][0] - R[a][0])[0] || '' };
+        const def = A[x.act];
+        if (NOROLE.includes(x.act)) return { ...base, Assessment: 'No role needed', AssessmentDetail: 'Self-service action.', _w: x.when };
+        if (!def) return { ...base, Assessment: 'Unmapped activity', AssessmentDetail: 'Not in the activity map; add it to LeastPrivilegeActivityMap.csv to assess it.', _w: x.when };
+        const tn = pick(targets[def.t]);
+        if (x.act === 'Update user' && rnd() < 0.15) return { ...base, TargetName: p.n, TargetType: 'User', Assessment: 'No role needed', AssessmentDetail: 'Action on the user\'s own account.', _w: x.when };
+        if (def.t === 'Group' && rnd() < 0.1) return { ...base, TargetName: tn, TargetType: 'Group', Assessment: 'No role needed', AssessmentDetail: 'User is an owner of the group (current ownership).', _w: x.when };
+        const covering = active.map(w => w.role).filter(r => def.c.includes(r)).sort((a, b) => R[a][0] - R[b][0]);
+        const leastScore = Math.max(...def.l.map(r => R[r][0]));
+        const cands = [...def.c].sort((a, b) => R[a][0] - R[b][0]).map(r => `${r}|${R[r][0]}`).join('; ');
+        const o = { ...base, TargetName: tn, TargetType: def.t, LeastPrivilegedRoles: def.l.join('; '), CandidateRoles: cands, CoveringRoles: covering.join('; '), RoleUsed: covering[0] || '', _w: x.when, _cov: covering };
+        if (!covering.length) return { ...o, Assessment: 'Not covered by an active role', AssessmentDetail: 'None of the user\'s active roles grant this. They may be an owner, have had a role this report can\'t see, or the role was removed.' };
+        if (R[covering[0]][0] <= leastScore) return { ...o, Assessment: 'Least privilege' };
+        return { ...o, Assessment: 'Over-privileged', AssessmentDetail: `Used ${covering[0]}; ${def.l.join(' or ')} would be enough.` };
+      });
+      recs.forEach(r => row(r));
+      wins.forEach(w => {
+        const inWin = recs.filter(r => (w.s == null || r._w >= w.s) && (w.e == null || r._w < w.e));
+        const need = inWin.filter(r => r.Assessment === 'Least privilege' || r.Assessment === 'Over-privileged');
+        const by = need.filter(r => r._cov.includes(w.role));
+        const low = by.filter(r => r._cov[0] === w.role);
+        let verdict, sug = '';
+        if (!by.length) verdict = 'Not used';
+        else if (!low.length) verdict = 'Not needed (another role covered these actions)';
+        else if (low.some(r => r.Assessment === 'Least privilege')) verdict = 'Appropriate';
+        else { verdict = 'Over-privileged'; sug = [...new Set(low.flatMap(r => r.LeastPrivilegedRoles.split('; ')))].join('; '); }
+        row({ ...common, RecordType: 'RoleWindow', UserId: id, UserPrincipalName: upn, UserDisplayName: p.n, RoleName: w.role, RoleIsPrivileged: R[w.role][1] ? 'True' : 'False', AssignmentSource: w.src, Scope: '/',
+          WindowStart: iso(w.s), WindowEnd: iso(w.e), ActionsInWindow: inWin.length, ActionsCoveredByRole: by.length, WindowVerdict: verdict, SuggestedRoles: sug, PrivilegeScore: R[w.role][0] });
+      });
+      (p.elig || []).forEach(r => row({ ...common, RecordType: 'RoleWindow', UserId: id, UserPrincipalName: upn, UserDisplayName: p.n, RoleName: r, RoleIsPrivileged: R[r][1] ? 'True' : 'False', AssignmentSource: 'Eligible (PIM)', Scope: '/', WindowStart: '2025-06-01T00:00:00Z', WindowVerdict: 'Eligible', PrivilegeScore: R[r][0] }));
+    }
+    Object.entries(R).forEach(([n, [s, pv]]) => row({ ...common, RecordType: 'Role', RoleName: n, RoleIsPrivileged: pv ? 'True' : 'False', RoleIsBuiltIn: 'True', PrivilegeScore: s }));
+    const esc = (v) => { v = String(v); return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+    return [head, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+  }
+
+  // ------------------------------------------------------------- wiring ----
+  function readFile(f) { if (!f) return; const rd = new FileReader(); rd.onload = () => load(String(rd.result), f.name); rd.readAsText(f); }
+  $('btnLoad').addEventListener('click', () => $('file').click());
+  $('file').addEventListener('change', e => { readFile(e.target.files[0]); e.target.value = ''; });
+  $('btnSample').addEventListener('click', () => load(sampleCsv(), 'Sample data'));
+  $('btnExport').addEventListener('click', exportRows);
+  $('fSource').addEventListener('change', render);
+  $('fWin').addEventListener('change', () => { if (focus && focus.kind === 'window') focus = null; render(); });
+  $('fAssess').addEventListener('change', render);
+  let st; $('fSearch').addEventListener('input', () => { clearTimeout(st); st = setTimeout(render, 150); });
+  ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement) $('drop').classList.remove('over'); }));
+  document.addEventListener('drop', e => readFile(e.dataTransfer.files[0]));
+  let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (USERS.length) render(); }, 150); });
+})();
+</script>
+</body>
+</html>

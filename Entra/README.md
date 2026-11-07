@@ -70,3 +70,51 @@ Open `CAPolicyDashboard.html` and drop `ca.csv` onto it (or **Sample data** for 
 
 Overlap is calculated from what policies target directly. Group and role membership isn't
 expanded, and device/app filters aren't evaluated.
+
+---
+
+# Least privilege review (admin actions vs. roles held)
+
+## 1. Generate the CSV
+
+```powershell
+.\Get-EntraLeastPrivilegeReport.ps1 -TenantId contoso.onmicrosoft.com -OutputPath .\least-privilege.csv
+```
+
+Options: `-Days` (default 30), `-UserPrincipalName` to limit to specific admins, `-MapPath` for a
+custom activity map. Needs `AuditLog.Read.All`, `RoleManagement.Read.Directory` and
+`Directory.Read.All`, plus a role that can read audit logs and role assignments (e.g. Global
+Reader). Audit logs are kept for 30 days (7 on free tenants); PIM history needs P2 / ID Governance.
+
+How it works:
+
+1. Rebuilds when each admin held each directory role: standing and time-bound assignments, PIM
+   activations (from PIM request history, cut short by self-deactivation), assignments removed
+   during the period, and roles granted through role-assignable groups.
+2. Reads each admin's actions from the Entra audit log.
+3. Maps each activity to the permission it needs using **`LeastPrivilegeActivityMap.csv`**, then
+   uses the tenant's own role definitions to find which active role granted it and which role
+   would have been the least-privileged choice (Microsoft's recommended role where listed).
+4. Rates each action (*Least privilege*, *Over-privileged*, *No role needed*, *Not covered by an
+   active role*, *Unmapped activity*) and each role assignment or PIM activation (*Appropriate*,
+   *Over-privileged*, *Not needed*, *Not used*).
+
+Self-service actions, changes to objects the admin owns, and user (not admin) consent are treated as
+needing no role. Activities that aren't in the map show as *Unmapped*; add a row (Activity
+supports `*` wildcards, first match wins) and re-run.
+
+## 2. View it
+
+Open `LeastPrivilegeDashboard.html` and drop the CSV onto it (or **Sample data** for a demo).
+
+- Headline: share of admin actions done with more privilege than needed, Global Admin used
+  unnecessarily, over-privileged PIM activations, unused privileged standing roles.
+- **Role used vs. role needed** heatmap, e.g. Global Administrator used where Groups
+  Administrator was enough.
+- **Admins** table with a suggested minimal set of roles per admin, worked out from what they
+  actually did; roles that weren't needed are struck through.
+- **Role assignments and PIM activations**, each with a verdict.
+- **Actions** list and an **Unmapped activities** list with template rows for the map.
+
+Audit logs don't record which role was used for an action, so the report assumes the
+least-privileged active role that grants the permission was used.

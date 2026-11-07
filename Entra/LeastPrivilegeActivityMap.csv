@@ -1,0 +1,113 @@
+Activity,Service,Permissions,PreferredRoles,NoRoleWhen,Notes
+"*PIM activation*",*,,,Always,"Self-activation of an eligible role; no admin role needed."
+"*(PIM activation expired)*",*,,,Always,"System event when an activation ends."
+"*deactivat*",PIM,,,Always,"Self-deactivation of a role."
+"*request approved*",PIM,,,Always,"Approving a PIM request needs the user to be a designated approver, not an admin role."
+"Add member to role in PIM*",*,microsoft.directory/privilegedIdentityManagement/allProperties/allTasks;microsoft.directory/roleAssignments/allProperties/allTasks,Privileged Role Administrator,,
+"Add eligible member to role in PIM*",*,microsoft.directory/privilegedIdentityManagement/allProperties/allTasks;microsoft.directory/roleAssignments/allProperties/allTasks,Privileged Role Administrator,,
+"Remove * from role in PIM*",*,microsoft.directory/privilegedIdentityManagement/allProperties/allTasks;microsoft.directory/roleAssignments/allProperties/allTasks,Privileged Role Administrator,,
+"Update role setting in PIM",*,microsoft.directory/privilegedIdentityManagement/allProperties/allTasks,Privileged Role Administrator,,
+"Add member to role",*,microsoft.directory/roleAssignments/allProperties/allTasks,Privileged Role Administrator,,
+"Remove member from role",*,microsoft.directory/roleAssignments/allProperties/allTasks,Privileged Role Administrator,,
+"Add eligible member to role",*,microsoft.directory/roleAssignments/allProperties/allTasks;microsoft.directory/privilegedIdentityManagement/allProperties/allTasks,Privileged Role Administrator,,
+"Remove eligible member from role",*,microsoft.directory/roleAssignments/allProperties/allTasks;microsoft.directory/privilegedIdentityManagement/allProperties/allTasks,Privileged Role Administrator,,
+"Add scoped member to role",*,microsoft.directory/roleAssignments/allProperties/allTasks;microsoft.directory/scopedRoleMemberships/allProperties/allTasks,Privileged Role Administrator,,
+"Remove scoped member from role",*,microsoft.directory/roleAssignments/allProperties/allTasks;microsoft.directory/scopedRoleMemberships/allProperties/allTasks,Privileged Role Administrator,,
+"Add role definition",*,microsoft.directory/roleDefinitions/allProperties/allTasks,Privileged Role Administrator,,
+"Update role definition",*,microsoft.directory/roleDefinitions/allProperties/allTasks,Privileged Role Administrator,,
+"Delete role definition",*,microsoft.directory/roleDefinitions/allProperties/allTasks,Privileged Role Administrator,,
+"Add user",*,microsoft.directory/users/create,User Administrator,,
+"Invite external user*",*,microsoft.directory/users/inviteGuest,Guest Inviter,,"Members may also be allowed to invite guests by the tenant's external collaboration settings."
+"Delete user",*,microsoft.directory/users/delete,User Administrator,,
+"Hard Delete user",*,microsoft.directory/users/delete,User Administrator,,
+"Restore user",*,microsoft.directory/users/restore;microsoft.directory/deletedItems.users/restore,User Administrator,,
+"Disable account",*,microsoft.directory/users/disable,User Administrator,,"Authentication Administrator can also disable non-admin users."
+"Enable account",*,microsoft.directory/users/enable,User Administrator,,
+"Update user",*,microsoft.directory/users/basic/update;microsoft.directory/users/manager/update;microsoft.directory/users/userPrincipalName/update;microsoft.directory/users/usageLocation/update;microsoft.directory/users/photo/update,User Administrator,Self,"Editing your own profile needs no admin role."
+"Set user manager",*,microsoft.directory/users/manager/update,User Administrator,,
+"Change user license",*,microsoft.directory/users/assignLicense,License Administrator,,
+"Set group license",*,microsoft.directory/groups/assignLicense,License Administrator,,
+"Reset user password",*,microsoft.directory/users/password/update,Helpdesk Administrator;Password Administrator,,"Resetting an admin's password needs a higher role (e.g. Privileged Authentication Administrator)."
+"Reset password (by admin)",*,microsoft.directory/users/password/update,Helpdesk Administrator;Password Administrator,,"Resetting an admin's password needs a higher role (e.g. Privileged Authentication Administrator)."
+"Set force change user password",*,microsoft.directory/users/password/update,Helpdesk Administrator;Password Administrator,,
+"Change user password",*,,,Always,"A user changing their own password."
+"*(self-service)*",*,,,Always,"Self-service action."
+"Change password*",*,,,Always,"A user changing their own password."
+"*refresh tokens*",*,microsoft.directory/users/invalidateAllRefreshTokens,Helpdesk Administrator,,
+"Update StsRefreshTokenValidFrom Timestamp",*,microsoft.directory/users/invalidateAllRefreshTokens,Helpdesk Administrator,,
+"Admin registered security info",*,microsoft.directory/users/authenticationMethods/create,Authentication Administrator,,"Managing an admin's methods needs Privileged Authentication Administrator."
+"Admin updated security info",*,microsoft.directory/users/authenticationMethods/basic/update,Authentication Administrator,,"Managing an admin's methods needs Privileged Authentication Administrator."
+"Admin deleted security info",*,microsoft.directory/users/authenticationMethods/delete,Authentication Administrator,,"Managing an admin's methods needs Privileged Authentication Administrator."
+"User * security info*",*,,,Always,"A user managing their own sign-in methods."
+"User registered*",*,,,Always,"A user managing their own sign-in methods."
+"Convert external user to internal*",*,microsoft.directory/users/convertExternalToInternalMemberUser,User Administrator,,
+"Add group",*,microsoft.directory/groups/create,Groups Administrator,,"Users may also be allowed to create groups by tenant settings."
+"Delete group",*,microsoft.directory/groups/delete,Groups Administrator,Owner:group,
+"Hard Delete group",*,microsoft.directory/deletedItems.groups/delete,Groups Administrator,,
+"Restore Group",*,microsoft.directory/groups/restore;microsoft.directory/deletedItems.groups/restore,Groups Administrator,Owner:group,
+"Update group",*,microsoft.directory/groups/basic/update;microsoft.directory/groups/settings/update;microsoft.directory/groups/visibility/update;microsoft.directory/groups/dynamicMembershipRule/update;microsoft.directory/groups/groupType/update,Groups Administrator,Owner:group,
+"Add member to group",*,microsoft.directory/groups/members/update,Groups Administrator,Owner:group,
+"Remove member from group",*,microsoft.directory/groups/members/update,Groups Administrator,Owner:group,
+"Add owner to group",*,microsoft.directory/groups/owners/update,Groups Administrator,Owner:group,
+"Remove owner from group",*,microsoft.directory/groups/owners/update,Groups Administrator,Owner:group,
+"Add app role assignment to group",*,microsoft.directory/servicePrincipals/appRoleAssignedTo/update,Cloud Application Administrator,Owner:servicePrincipal,
+"Remove app role assignment from group",*,microsoft.directory/servicePrincipals/appRoleAssignedTo/update,Cloud Application Administrator,Owner:servicePrincipal,
+"Add app role assignment grant to user",*,microsoft.directory/servicePrincipals/appRoleAssignedTo/update,Cloud Application Administrator,Owner:servicePrincipal,
+"Remove app role assignment from user",*,microsoft.directory/servicePrincipals/appRoleAssignedTo/update,Cloud Application Administrator,Owner:servicePrincipal,
+"Add app role assignment to service principal",*,microsoft.directory/servicePrincipals/appRoleAssignedTo/update,Cloud Application Administrator,,"Granting Microsoft Graph application permissions needs Privileged Role Administrator."
+"Remove app role assignment from service principal",*,microsoft.directory/servicePrincipals/appRoleAssignedTo/update,Cloud Application Administrator,,
+"Update application*Certificates and secrets*",*,microsoft.directory/applications/credentials/update,Cloud Application Administrator,Owner:application,
+"Add application",*,microsoft.directory/applications/create,Application Developer;Cloud Application Administrator,,"Users may also be allowed to register apps by tenant settings."
+"Update application",*,microsoft.directory/applications/basic/update;microsoft.directory/applications/authentication/update;microsoft.directory/applications/permissions/update;microsoft.directory/applications/appRoles/update;microsoft.directory/applications/audience/update;microsoft.directory/applications/notes/update;microsoft.directory/applications/tag/update,Cloud Application Administrator,Owner:application,
+"Delete application",*,microsoft.directory/applications/delete,Cloud Application Administrator,Owner:application,
+"Restore application",*,microsoft.directory/deletedItems.applications/restore,Cloud Application Administrator,,
+"Hard delete application",*,microsoft.directory/deletedItems.applications/delete,Cloud Application Administrator,,
+"Add owner to application",*,microsoft.directory/applications/owners/update,Cloud Application Administrator,Owner:application,
+"Remove owner from application",*,microsoft.directory/applications/owners/update,Cloud Application Administrator,Owner:application,
+"Add service principal",*,microsoft.directory/servicePrincipals/create,Cloud Application Administrator,,"Also created automatically when users consent to an app."
+"Update service principal",*,microsoft.directory/servicePrincipals/basic/update;microsoft.directory/servicePrincipals/authentication/update;microsoft.directory/servicePrincipals/tag/update;microsoft.directory/servicePrincipals/notes/update;microsoft.directory/servicePrincipals/policies/update,Cloud Application Administrator,Owner:servicePrincipal,
+"Delete service principal",*,microsoft.directory/servicePrincipals/delete,Cloud Application Administrator,Owner:servicePrincipal,
+"*service principal credentials*",*,microsoft.directory/servicePrincipals/credentials/update,Cloud Application Administrator,Owner:servicePrincipal,
+"Add owner to service principal",*,microsoft.directory/servicePrincipals/owners/update,Cloud Application Administrator,Owner:servicePrincipal,
+"Remove owner from service principal",*,microsoft.directory/servicePrincipals/owners/update,Cloud Application Administrator,Owner:servicePrincipal,
+"Add delegated permission grant",*,microsoft.directory/oAuth2PermissionGrants/allProperties/allTasks;microsoft.directory/servicePrincipals/managePermissionGrantsForAll.microsoft-application-admin,Cloud Application Administrator,,
+"Remove delegated permission grant",*,microsoft.directory/oAuth2PermissionGrants/allProperties/allTasks,Cloud Application Administrator,,
+"Consent to application",*,microsoft.directory/servicePrincipals/managePermissionGrantsForAll.microsoft-application-admin;microsoft.directory/servicePrincipals/managePermissionGrantsForAll.microsoft-company-admin,Cloud Application Administrator,UserConsent,"Tenant-wide consent to Microsoft Graph application permissions needs Privileged Role Administrator."
+"Add conditional access policy",*,microsoft.directory/conditionalAccessPolicies/create,Conditional Access Administrator,,
+"Update conditional access policy",*,microsoft.directory/conditionalAccessPolicies/basic/update,Conditional Access Administrator,,
+"Delete conditional access policy",*,microsoft.directory/conditionalAccessPolicies/delete,Conditional Access Administrator,,
+"Add named location",*,microsoft.directory/namedLocations/create,Conditional Access Administrator,,
+"Update named location",*,microsoft.directory/namedLocations/basic/update,Conditional Access Administrator,,
+"Delete named location",*,microsoft.directory/namedLocations/delete,Conditional Access Administrator,,
+"Update authorization policy",*,microsoft.directory/authorizationPolicy/allProperties/allTasks,Privileged Role Administrator,,
+"Add policy",*,microsoft.directory/policies/create,Security Administrator,,
+"Update policy",*,microsoft.directory/policies/basic/update,Security Administrator,,
+"Delete policy",*,microsoft.directory/policies/delete,Security Administrator,,
+"*cross-tenant access*",*,microsoft.directory/crossTenantAccessPolicy/basic/update;microsoft.directory/crossTenantAccessPolicy/partners/create;microsoft.directory/crossTenantAccessPolicy/partners/b2bCollaboration/update;microsoft.directory/crossTenantAccessPolicy/default/b2bCollaboration/update,Security Administrator,,
+"Delete device",*,microsoft.directory/devices/delete,Cloud Device Administrator,,
+"Disable device",*,microsoft.directory/devices/disable,Cloud Device Administrator,,
+"Enable device",*,microsoft.directory/devices/enable,Cloud Device Administrator,,
+"Read BitLocker key",*,microsoft.directory/bitlockerKeys/key/read,Helpdesk Administrator;Cloud Device Administrator,,"Device owners can read their own device's keys."
+"Recover device local administrator password",*,microsoft.directory/deviceLocalCredentials/password/read,Cloud Device Administrator,,
+"Register device",*,,,Always,"Device self-registration."
+"Add device",*,,,Always,"Device self-registration."
+"Add registered owner to device",*,,,Always,"Device self-registration."
+"Add registered users to device",*,,,Always,"Device self-registration."
+"Add verified domain",*,microsoft.directory/domains/allProperties/allTasks,Domain Name Administrator,,
+"Add unverified domain",*,microsoft.directory/domains/allProperties/allTasks,Domain Name Administrator,,
+"Verify domain",*,microsoft.directory/domains/allProperties/allTasks,Domain Name Administrator,,
+"Remove verified domain",*,microsoft.directory/domains/allProperties/allTasks,Domain Name Administrator,,
+"Remove unverified domain",*,microsoft.directory/domains/allProperties/allTasks,Domain Name Administrator,,
+"Update domain",*,microsoft.directory/domains/allProperties/allTasks,Domain Name Administrator,,
+"Set federation settings on domain",*,microsoft.directory/domains/federation/update;microsoft.directory/domains/allProperties/allTasks,Domain Name Administrator;Security Administrator,,
+"Set domain authentication",*,microsoft.directory/domains/federation/update;microsoft.directory/domains/allProperties/allTasks,Domain Name Administrator;Security Administrator,,
+"Update company settings",*,microsoft.directory/organization/basic/update,,,
+"Set company information",*,microsoft.directory/organization/basic/update,,,
+"Add administrative unit",*,microsoft.directory/administrativeUnits/allProperties/allTasks,Privileged Role Administrator,,
+"Update administrative unit",*,microsoft.directory/administrativeUnits/allProperties/allTasks,Privileged Role Administrator,,
+"Delete administrative unit",*,microsoft.directory/administrativeUnits/allProperties/allTasks,Privileged Role Administrator,,
+"Add member to administrative unit",*,microsoft.directory/administrativeUnits/members/update;microsoft.directory/administrativeUnits/allProperties/allTasks,Privileged Role Administrator,,
+"Remove member from administrative unit",*,microsoft.directory/administrativeUnits/members/update;microsoft.directory/administrativeUnits/allProperties/allTasks,Privileged Role Administrator,,
+"Add contact",*,microsoft.directory/contacts/create,User Administrator,,
+"Update contact",*,microsoft.directory/contacts/basic/update,User Administrator,,
+"Delete contact",*,microsoft.directory/contacts/delete,User Administrator,,
