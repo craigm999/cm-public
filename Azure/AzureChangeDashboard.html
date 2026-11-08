@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azure Change Log</title>
+<!--
+  Dashboard for the CSV produced by Get-AzureResourceChangeReport.ps1.
+  Fully self-contained: no network requests, the CSV is read locally in the browser.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ee;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6; --c-create: #2a78d6; --c-update: #1baf7a; --c-delete: #eb6834;
+    --warning: #fab219; --critical: #d03b3b; --neutral: #c3c2b7;
+    --accent-wash: rgba(42,120,214,0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+      --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5; --c-create: #3987e5; --c-update: #199e70; --c-delete: #d95926;
+      --neutral: #6b6a66; --accent-wash: rgba(57,135,229,0.16);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --c-create: #3987e5; --c-update: #199e70; --c-delete: #d95926;
+    --neutral: #6b6a66; --accent-wash: rgba(57,135,229,0.16);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--ink-2); margin: 0; }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .card-sub { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; }
+  button, select, input[type=search] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; }
+  button { cursor: pointer; }
+  button:hover { background: var(--surface-2); }
+  button.primary { background: var(--series-1); color: #fff; border-color: transparent; }
+  button.primary:hover { filter: brightness(1.08); }
+  button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; margin-bottom: 12px; }
+  #drop { border: 1.5px dashed var(--axis); border-radius: 12px; padding: 48px 16px; text-align: center; background: var(--surface); color: var(--ink-2); }
+  #drop.over { border-color: var(--series-1); background: var(--accent-wash); }
+  #drop strong { color: var(--ink); display: block; font-size: 16px; margin-bottom: 6px; }
+  #drop code { background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 16px; }
+  .filters label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .filters select { max-width: 260px; }
+  .filters input[type=search] { min-width: 220px; flex: 1 1 220px; max-width: 380px; }
+  .tiles { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .tile { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
+  button.tile:hover { background: var(--surface-2); }
+  .tile[aria-pressed="true"] { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); background: var(--accent-wash); }
+  .tile .label { color: var(--ink-2); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .tile .value { font-size: 30px; font-weight: 600; line-height: 1.15; }
+  .tile .meta { color: var(--muted); font-size: 12px; }
+  .tile.hero .value { font-size: 48px; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; display: inline-block; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); margin: 0 0 10px; padding: 0; list-style: none; }
+  .legend li { display: flex; align-items: center; gap: 6px; }
+  .chart { position: relative; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .hit { cursor: pointer; }
+  .hit:hover .mark, .hit:focus .mark { filter: brightness(1.12); }
+  .hit:focus { outline: none; }
+  .hit:focus .mark { stroke: var(--ink); stroke-width: 1.5; }
+  #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); opacity: 0; transition: opacity .1s; max-width: 320px; }
+  #tip .v { font-size: 14px; font-weight: 600; }
+  #tip .k { color: var(--ink-2); }
+  #tip .row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+  #tip .row .n { font-weight: 600; font-variant-numeric: tabular-nums; }
+  #tip .key { width: 12px; height: 2px; border-radius: 1px; display: inline-block; margin-right: 6px; vertical-align: middle; }
+  #tip .hint { color: var(--muted); margin-top: 4px; }
+  .table-head { display: flex; flex-wrap: wrap; gap: 8px 12px; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .focus-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-wash); border: 1px solid var(--series-1); border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 13px; max-width: 100%; }
+  .focus-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .focus-chip button { border: 0; background: transparent; padding: 0 6px; border-radius: 999px; font-size: 15px; line-height: 1; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; max-height: 640px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { position: sticky; top: 0; background: var(--surface-2); font-weight: 600; color: var(--ink-2); white-space: nowrap; z-index: 1; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th .arrow { color: var(--muted); margin-left: 4px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.res { min-width: 200px; max-width: 320px; overflow-wrap: anywhere; }
+  td.wide { min-width: 160px; max-width: 280px; overflow-wrap: anywhere; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .ct { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-weight: 500; }
+  .ct .sw { width: 8px; height: 8px; border-radius: 50%; }
+  .tag { display: inline-flex; font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-2); white-space: nowrap; margin: 0 4px 2px 0; }
+  .link { color: inherit; background: none; border: 0; padding: 0; text-align: left; font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: var(--axis); text-underline-offset: 2px; }
+  .link:hover { text-decoration-color: var(--ink); background: none; }
+  tr:last-child td { border-bottom: 0; }
+  .more { margin-top: 10px; color: var(--ink-2); font-size: 13px; display: flex; gap: 10px; align-items: center; }
+  .banner { border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--border); display: flex; gap: 10px; }
+  .banner .ico { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--warning); color: #0b0b0b; font-weight: 700; font-size: 12px; display: grid; place-items: center; margin-top: 1px; }
+  details.data { margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+  details.data summary { cursor: pointer; }
+  details.data .table-scroll { margin-top: 8px; max-height: 300px; }
+  footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
+  footer p { margin: 4px 0; }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 640px) {
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tile.hero { grid-column: 1 / -1; }
+    .tile .value { font-size: 26px; } .tile.hero .value { font-size: 40px; }
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Azure change log</h1>
+      <p class="sub" id="subtitle">Resources created, changed and deleted across subscriptions, and who did it</p>
+    </div>
+    <div class="actions">
+      <input type="file" id="file" accept=".csv,text/csv" class="hidden">
+      <button class="primary" id="btnLoad" type="button">Load CSV…</button>
+      <button id="btnSample" type="button">Sample data</button>
+    </div>
+  </header>
+
+  <div id="drop">
+    <strong>Drop the Azure change CSV here</strong>
+    Generate it with <code>.\Get-AzureResourceChangeReport.ps1 -Days 30 -OutputPath .\azure-changes.csv</code>, then drop it here or use <em>Load CSV</em>.<br>
+    The file is read in your browser only; nothing is uploaded.
+  </div>
+
+  <main id="dash" class="hidden">
+    <div id="banners"></div>
+    <div class="filters" role="group" aria-label="Filters">
+      <label>Subscription <select id="fSub"><option value="">All subscriptions</option></select></label>
+      <label>Period
+        <select id="fDays"><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="0" selected>Whole report</option></select>
+      </label>
+      <label>Changed by
+        <select id="fCaller"><option value="">Anyone</option><option value="User">People</option><option value="app">Service principals &amp; managed identities</option></select>
+      </label>
+      <label>Change
+        <select id="fType"><option value="">Creates, updates &amp; deletes</option><option value="Create">Creates</option><option value="Update">Updates</option><option value="Delete">Deletes</option><option value="Deployment">Deployments</option><option value="Action">Actions</option><option value="*">Everything</option></select>
+      </label>
+      <input type="search" id="fSearch" placeholder="Search resource, group, type or person" aria-label="Search">
+    </div>
+
+    <section class="tiles" id="tiles" aria-label="Summary"></section>
+
+    <section class="card">
+      <h2>Changes per day</h2>
+      <p class="card-sub">Hover for the day's breakdown; click a day to list its changes.</p>
+      <ul class="legend" id="lgDaily"></ul>
+      <div class="chart" id="chDaily"></div>
+      <details class="data"><summary>Show data</summary><div class="table-scroll" id="tbDaily"></div></details>
+    </section>
+
+    <div class="grid2">
+      <section class="card">
+        <h2>Who made the most changes</h2>
+        <p class="card-sub">People, service principals and managed identities. Click a bar to list their changes.</p>
+        <ul class="legend" id="lgCallers"></ul>
+        <div class="chart" id="chCallers"></div>
+        <details class="data"><summary>Show data</summary><div class="table-scroll" id="tbCallers"></div></details>
+      </section>
+      <section class="card">
+        <h2>Most-changed resource types</h2>
+        <p class="card-sub">Click a bar to list changes to that type.</p>
+        <ul class="legend" id="lgTypes"></ul>
+        <div class="chart" id="chTypes"></div>
+        <details class="data"><summary>Show data</summary><div class="table-scroll" id="tbTypes"></div></details>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="table-head">
+        <div><h2 id="chgTitle">Change log</h2><p class="card-sub" id="chgSub" style="margin:0"></p></div>
+        <div class="actions"><span id="focusChip"></span><button type="button" id="btnExport">Export these rows</button></div>
+      </div>
+      <div class="table-scroll"><table><thead><tr id="chgHead"></tr></thead><tbody id="chgBody"></tbody></table></div>
+      <div class="more" id="chgMore"></div>
+    </section>
+
+    <section class="card">
+      <div class="table-head">
+        <div><h2>Resources</h2><p class="card-sub" id="resSub" style="margin:0"></p></div>
+        <label class="muted" style="font-size:13px;display:flex;gap:6px;align-items:center">Show
+          <select id="fRes">
+            <option value="created" selected>Created in the period</option>
+            <option value="changed">Changed in the period</option>
+            <option value="unknown">Creator unknown</option>
+            <option value="all">All resources</option>
+          </select>
+        </label>
+      </div>
+      <div class="table-scroll"><table><thead><tr id="resHead"></tr></thead><tbody id="resBody"></tbody></table></div>
+      <div class="more" id="resMore"></div>
+    </section>
+
+    <section class="card">
+      <h2>Subscriptions</h2>
+      <p class="card-sub">Coverage of the report. Subscriptions with errors may be missing changes.</p>
+      <div class="table-scroll"><table><thead><tr id="subHead"></tr></thead><tbody id="subBody"></tbody></table></div>
+    </section>
+
+    <footer>
+      <p>Changes come from each subscription's Activity Log (kept for 90 days). "Create" is identified from the resource's creation time or Resource Graph; "Create or update" means the resource has since been deleted so it can't be told. Changed properties come from Azure Resource Graph and cover the last 14 days only.</p>
+      <p>"via" shows the tool a person used (e.g. Azure CLI, Azure Portal). Changes made inside an ARM / Bicep deployment show the deployment name.</p>
+    </footer>
+  </main>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const fmtInt = new Intl.NumberFormat();
+  const DAY = 86400000;
+  const SERIES = [
+    { key: 'Create', label: 'Created', color: 'var(--c-create)' },
+    { key: 'Update', label: 'Updated', color: 'var(--c-update)' },
+    { key: 'Delete', label: 'Deleted', color: 'var(--c-delete)' },
+  ];
+  const seriesOf = (t) => t === 'Create' ? 'Create' : t === 'Delete' ? 'Delete' : (t === 'Update' || t === 'Create or update') ? 'Update' : null;
+  const CT_COLOR = { Create: 'var(--c-create)', Update: 'var(--c-update)', 'Create or update': 'var(--c-update)', Delete: 'var(--c-delete)', Deployment: 'var(--neutral)', Action: 'var(--neutral)' };
+
+  let CHANGES = [], RESOURCES = [], SUBS = [], META = {};
+  let focus = null, chgPage = 200, resPage = 200;
+  let chgSort = { key: 'when', dir: -1 }, resSort = { key: 'created', dir: -1 };
+  let viewChanges = [];
+
+  // ---------------------------------------------------------------- CSV ----
+  function parseCsv(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const rows = []; let row = []; let field = ''; let q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; } else field += c; }
+      else if (c === '"') q = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(field); field = ''; rows.push(row); row = []; }
+      else field += c;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    const head = rows.shift() || [];
+    return rows.filter(r => r.length > 1 || r[0]).map(r => { const o = {}; head.forEach((h, i) => o[h.trim()] = (r[i] ?? '').trim()); return o; });
+  }
+  const date = (s) => { if (!s) return null; const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z'); return isNaN(d) ? null : d; };
+  const fmtDT = (d) => d ? d.toISOString().slice(0, 16).replace('T', ' ') : '';
+  const fmtD = (d) => d ? d.toISOString().slice(0, 10) : '';
+  const dayKey = (d) => d.toISOString().slice(0, 10);
+  const shortType = (t) => (t || '').replace(/^Microsoft\./, '');
+  const isApp = (t) => t === 'Service principal' || t === 'Managed identity';
+
+  function load(text, source) {
+    const rows = parseCsv(text);
+    if (!rows.length || !('RecordType' in rows[0]) || !('ChangeType' in rows[0])) {
+      alert('This does not look like a Get-AzureResourceChangeReport.ps1 CSV (missing RecordType / ChangeType columns).');
+      return;
+    }
+    CHANGES = []; RESOURCES = []; SUBS = [];
+    rows.forEach((r, i) => {
+      if (r.RecordType === 'Change') CHANGES.push({ i, when: date(r.EventTime), sub: r.SubscriptionId, subName: r.SubscriptionName || r.SubscriptionId, rg: r.ResourceGroup,
+        name: r.ResourceName, type: r.ResourceType, id: r.ResourceId, ct: r.ChangeType, op: r.Operation, opName: r.OperationName, status: r.Status,
+        caller: r.Caller, callerName: r.CallerName || r.Caller || 'Unknown', callerType: r.CallerType, via: r.CallerApp, ip: r.ClientIp,
+        deployment: r.Deployment, props: r.ChangedProperties ? r.ChangedProperties.split(';').map(s => s.trim()).filter(Boolean) : [], exists: /true/i.test(r.ResourceExists), raw: r });
+      else if (r.RecordType === 'Resource') RESOURCES.push({ sub: r.SubscriptionId, subName: r.SubscriptionName || r.SubscriptionId, rg: r.ResourceGroup, name: r.ResourceName, type: r.ResourceType,
+        id: r.ResourceId, location: r.Location, created: date(r.CreatedTime), createdBy: r.CreatedBy, createdSrc: r.CreatedBySource,
+        changed: date(r.LastChangedTime), changedBy: r.LastChangedBy, n: +r.ChangesInPeriod || 0 });
+      else if (r.RecordType === 'Subscription') SUBS.push({ id: r.SubscriptionId, name: r.SubscriptionName, events: +r.Events || 0, resources: +r.Resources || 0, errors: r.Errors });
+    });
+    const any = rows.find(r => r.ReportGeneratedUtc);
+    META = { source, generated: any ? date(any.ReportGeneratedUtc) : new Date(), start: any ? date(any.PeriodStartUtc) : null };
+    if (!META.start && CHANGES.length) META.start = new Date(Math.min(...CHANGES.map(c => +c.when)));
+    const subSel = $('fSub'); subSel.replaceChildren(new Option('All subscriptions', ''));
+    const subs = new Map(); SUBS.forEach(s => subs.set(s.id, s.name)); CHANGES.forEach(c => { if (!subs.has(c.sub)) subs.set(c.sub, c.subName); });
+    [...subs.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]))).forEach(([id, n]) => subSel.add(new Option(n || id, id)));
+    focus = null;
+    $('drop').classList.add('hidden'); $('dash').classList.remove('hidden');
+    $('subtitle').textContent = `${source} · ${fmtInt.format(subs.size)} subscriptions · ${META.start ? fmtD(META.start) + ' to ' + fmtD(META.generated) : ''}`;
+    render();
+  }
+
+  // ------------------------------------------------------------ scoping ----
+  function periodStart() { const d = +$('fDays').value; return d ? new Date(+META.generated - d * DAY) : META.start; }
+  function scopedChanges(ignoreType) {
+    const sub = $('fSub').value, ct = $('fType').value, who = $('fCaller').value, q = $('fSearch').value.trim().toLowerCase();
+    const from = periodStart();
+    return CHANGES.filter(c => {
+      if (sub && c.sub !== sub) return false;
+      if (from && c.when < from) return false;
+      if (who === 'User' && c.callerType !== 'User') return false;
+      if (who === 'app' && !isApp(c.callerType)) return false;
+      if (!ignoreType) {
+        if (ct === '' && !seriesOf(c.ct)) return false;
+        if (ct && ct !== '*' && (ct === 'Update' ? seriesOf(c.ct) !== 'Update' : c.ct !== ct)) return false;
+      }
+      if (q && !`${c.name} ${c.rg} ${c.type} ${c.callerName} ${c.caller} ${c.deployment}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+  function focusMatch(c) {
+    if (!focus) return true;
+    switch (focus.kind) {
+      case 'day': return dayKey(c.when) === focus.value;
+      case 'caller': return c.callerName === focus.value;
+      case 'type': return c.type === focus.value;
+      case 'ct': return seriesOf(c.ct) === focus.value || c.ct === focus.value;
+      case 'resource': return c.id.toLowerCase() === focus.value;
+      case 'deployment': return c.deployment === focus.value || (c.ct === 'Deployment' && c.name === focus.value);
+    }
+    return true;
+  }
+  function setFocus(f) {
+    const same = focus && f && JSON.stringify(focus) === JSON.stringify(f);
+    focus = same ? null : f; chgPage = 200;
+    render();
+    if (focus) $('chgTitle').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ------------------------------------------------------------ helpers ----
+  const tip = $('tip');
+  function showTipNodes(evt, nodes) {
+    tip.replaceChildren(...nodes);
+    let x, y;
+    if (evt.type !== 'focus' && evt.clientX != null) { x = evt.clientX; y = evt.clientY; }
+    else { const b = evt.currentTarget.getBoundingClientRect(); x = b.left + b.width / 2; y = b.top; }
+    tip.style.opacity = '1';
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = x + 12, top = y - th - 12;
+    if (left + tw > innerWidth - 8) left = x - tw - 12;
+    if (top < 8) top = y + 16;
+    tip.style.left = Math.max(8, left) + 'px'; tip.style.top = top + 'px';
+  }
+  function showTip(evt, value, label, hint) { const n = [el('div', 'v', value), el('div', 'k', label)]; if (hint) n.push(el('div', 'hint', hint)); showTipNodes(evt, n); }
+  const hideTip = () => { tip.style.opacity = '0'; };
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function svgEl(tag, attrs, parent) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.append(e); return e; }
+  function clickable(node, fn) { node.setAttribute('tabindex', '0'); node.setAttribute('role', 'button'); node.addEventListener('click', fn); node.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } }); }
+  function tipOn(node, fn) { node.addEventListener('pointermove', fn); node.addEventListener('focus', fn); node.addEventListener('pointerleave', hideTip); node.addEventListener('blur', hideTip); }
+  const truncate = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+  function niceTicks(v) {
+    // whole-number axis: step from 1, 2, 5 x 10^n so that ~4 steps cover v
+    const raw = Math.max(1, v) / 4; const p = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = Math.max(1, [1, 2, 5, 10].map(m => m * p).find(x => x >= raw));
+    const n = Math.max(1, Math.ceil(Math.max(1, v) / step));
+    return { max: n * step, step, n };
+  }
+  function legend(host, items) { host.replaceChildren(...items.map(it => { const li = el('li'); const sw = el('span', 'sw'); sw.style.background = it.color; li.append(sw, document.createTextNode(it.label)); return li; })); }
+  function ctPill(t) { const p = el('span', 'ct'); const d = el('span', 'sw'); d.style.background = CT_COLOR[t] || 'var(--neutral)'; p.append(d, document.createTextNode(t)); return p; }
+  function dataTable(host, head, rows) {
+    const t = el('table'); const tr = el('tr'); head.forEach(h => tr.append(el('th', '', h)));
+    const th = el('thead'); th.append(tr); t.append(th); const tb = el('tbody');
+    rows.forEach(r => { const row = el('tr'); r.forEach((v, i) => row.append(el('td', i ? 'num' : '', v))); tb.append(row); });
+    t.append(tb); host.replaceChildren(t);
+  }
+  function sortHeader(headEl, cols, state, onChange) {
+    headEl.replaceChildren();
+    cols.forEach(c => {
+      const th = el('th', c.get ? 'sortable' : '', c.label); th.scope = 'col';
+      if (c.get) {
+        th.tabIndex = 0;
+        th.setAttribute('aria-sort', state.key === c.key ? (state.dir > 0 ? 'ascending' : 'descending') : 'none');
+        if (state.key === c.key) th.append(el('span', 'arrow', state.dir > 0 ? '▲' : '▼'));
+        const act = () => { if (state.key === c.key) state.dir = -state.dir; else { state.key = c.key; state.dir = c.desc ? -1 : 1; } onChange(); };
+        th.addEventListener('click', act); th.addEventListener('keydown', e => { if (e.key === 'Enter') act(); });
+      }
+      headEl.append(th);
+    });
+  }
+  function sortBy(arr, cols, state) { const c = cols.find(x => x.key === state.key); if (!c) return arr; return [...arr].sort((a, b) => { const x = c.get(a), y = c.get(b); return (x < y ? -1 : x > y ? 1 : 0) * state.dir; }); }
+
+  // --------------------------------------------------------------- tiles ---
+  function renderTiles(ch) {
+    const t = $('tiles'); t.replaceChildren();
+    const by = (k) => ch.filter(c => seriesOf(c.ct) === k).length;
+    const resources = new Set(ch.map(c => c.id.toLowerCase())).size;
+    const callers = new Map(); ch.forEach(c => callers.set(c.callerName, c.callerType));
+    const people = [...callers.values()].filter(x => x === 'User').length;
+    const errs = SUBS.filter(s => s.errors).length;
+    const defs = [
+      { hero: true, label: 'Changes', value: ch.length, meta: `to ${fmtInt.format(resources)} resources` },
+      { label: 'Created', value: by('Create'), color: 'var(--c-create)', f: { kind: 'ct', value: 'Create', label: 'Created resources' } },
+      { label: 'Updated', value: by('Update'), color: 'var(--c-update)', f: { kind: 'ct', value: 'Update', label: 'Updated resources' } },
+      { label: 'Deleted', value: by('Delete'), color: 'var(--c-delete)', f: { kind: 'ct', value: 'Delete', label: 'Deleted resources' } },
+      { label: 'Changed by', value: callers.size, meta: `${people} people · ${callers.size - people} apps / identities` },
+      { label: 'Subscriptions', value: SUBS.length || new Set(CHANGES.map(c => c.sub)).size, meta: errs ? `${errs} with errors - see below` : 'all read successfully', flag: errs > 0 },
+    ];
+    defs.forEach(d => {
+      const b = el(d.f ? 'button' : 'div', 'tile' + (d.hero ? ' hero' : ''));
+      if (d.f) { b.type = 'button'; b.setAttribute('aria-pressed', focus && focus.label === d.f.label ? 'true' : 'false'); b.addEventListener('click', () => setFocus(d.f)); }
+      const l = el('span', 'label');
+      if (d.color) { const s = el('span', 'sw'); s.style.background = d.color; l.append(s); }
+      if (d.flag) { const s = el('span', 'sw'); s.style.cssText = 'background:var(--warning);border-radius:50%;width:8px;height:8px'; l.append(s); }
+      l.append(document.createTextNode(d.label));
+      b.append(l, el('span', 'value', fmtInt.format(d.value)));
+      if (d.meta) b.append(el('span', 'meta', d.meta));
+      t.append(b);
+    });
+  }
+
+  // ---------------------------------------------------- daily stacked ----
+  function renderDaily(ch) {
+    legend($('lgDaily'), SERIES);
+    const host = $('chDaily');
+    const from = periodStart() || new Date(Math.min(...ch.map(c => +c.when)));
+    const days = [];
+    for (let d = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate())); d <= META.generated; d = new Date(+d + DAY)) days.push(dayKey(d));
+    const counts = new Map(days.map(d => [d, { Create: 0, Update: 0, Delete: 0 }]));
+    ch.forEach(c => { const s = seriesOf(c.ct); const k = dayKey(c.when); if (s && counts.has(k)) counts.get(k)[s]++; });
+    const totals = days.map(d => SERIES.reduce((n, s) => n + counts.get(d)[s.key], 0));
+    const W = Math.max(300, host.clientWidth), H = 240, padL = 44, padB = 28, padT = 10;
+    const plotW = W - padL - 4, plotH = H - padB - padT;
+    const tk = niceTicks(Math.max(...totals, 0)), max = tk.max;
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': `Changes per day, up to ${Math.max(...totals, 0)} in a day` });
+    for (let i = 0; i <= tk.n; i++) {
+      const y = padT + plotH - plotH * i / tk.n;
+      svgEl('line', { x1: padL, x2: W, y1: y, y2: y, stroke: i ? 'var(--grid)' : 'var(--axis)' }, svg);
+      svgEl('text', { x: padL - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--muted)', style: 'font-variant-numeric:tabular-nums' }, svg).textContent = fmtInt.format(tk.step * i);
+    }
+    const band = plotW / days.length, bw = Math.max(2, Math.min(24, band * 0.7));
+    const step = Math.ceil(days.length / Math.max(2, Math.floor(plotW / 64)));
+    days.forEach((d, i) => {
+      const x = padL + band * i + (band - bw) / 2;
+      const g = svgEl('g', { class: 'hit', 'aria-label': `${d}: ${totals[i]} changes` }, svg);
+      if (focus && focus.kind === 'day' && focus.value !== d) g.setAttribute('opacity', '0.4');
+      svgEl('rect', { x: padL + band * i, y: padT, width: band, height: plotH, fill: 'transparent' }, g);
+      let y = padT + plotH;
+      const visible = SERIES.filter(s => counts.get(d)[s.key]);
+      visible.forEach((s, si) => {
+        const v = counts.get(d)[s.key]; let h = plotH * v / max;
+        const gap = si > 0 ? 2 : 0;
+        h = Math.max(1, h - gap); y -= h + gap;
+        const top = si === visible.length - 1, r = top ? Math.min(4, bw / 2, h) : 0;
+        const path = top ? `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + bw - r}Q${x + bw},${y} ${x + bw},${y + r}V${y + h}Z` : `M${x},${y}H${x + bw}V${y + h}H${x}Z`;
+        svgEl('path', { d: path, fill: s.color, class: 'mark' }, g);
+      });
+      if (i % step === 0) {
+        const t = svgEl('text', { x: padL + band * i + band / 2, y: H - 8, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)' }, svg);
+        t.textContent = new Date(d + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+      }
+      tipOn(g, (e) => {
+        const n = [el('div', 'v', `${fmtInt.format(totals[i])} changes`), el('div', 'k', new Date(d + 'T00:00:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }))];
+        SERIES.forEach(s => { const r = el('div', 'row'); const l = el('span'); const k = el('span', 'key'); k.style.background = s.color; l.append(k, document.createTextNode(s.label)); r.append(l, el('span', 'n', fmtInt.format(counts.get(d)[s.key]))); n.push(r); });
+        n.push(el('div', 'hint', 'click to list'));
+        showTipNodes(e, n);
+      });
+      clickable(g, () => setFocus({ kind: 'day', value: d, label: `Changes on ${d}` }));
+    });
+    host.replaceChildren(svg);
+    const tw = el('div'); dataTable(tw, ['Day', 'Created', 'Updated', 'Deleted'], [...days].reverse().map(d => [d, ...SERIES.map(s => fmtInt.format(counts.get(d)[s.key]))]));
+    $('tbDaily').replaceChildren(tw.firstChild);
+  }
+
+  // ------------------------------------------------- horizontal stacks ----
+  function stackedBars(host, tableHost, lgHost, items, onClick, isFocused, labelFn) {
+    legend(lgHost, SERIES);
+    if (!items.length) { host.replaceChildren(el('p', 'muted', 'Nothing to show.')); tableHost.replaceChildren(); return; }
+    const W = Math.max(280, host.clientWidth), labelW = Math.min(220, W * 0.42), barH = 16, gap = 12;
+    const H = items.length * (barH + gap), plotW = W - labelW - 44;
+    const max = Math.max(1, ...items.map(i => i.total));
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': items.map(i => `${i.label} ${i.total}`).join(', ') });
+    svgEl('line', { x1: labelW, x2: labelW, y1: 0, y2: H - gap + 2, stroke: 'var(--axis)' }, svg);
+    const anyF = items.some(isFocused);
+    items.forEach((it, i) => {
+      const y = i * (barH + gap);
+      const g = svgEl('g', { class: 'hit', 'aria-label': `${it.label}: ${it.total} changes` }, svg);
+      if (anyF && !isFocused(it)) g.setAttribute('opacity', '0.4');
+      svgEl('rect', { x: 0, y: y - gap / 2, width: W, height: barH + gap, fill: 'transparent' }, g);
+      const lt = svgEl('text', { x: labelW - 8, y: y + barH / 2 + 4, 'text-anchor': 'end', 'font-size': 12, fill: 'var(--ink-2)' }, g);
+      lt.textContent = truncate(labelFn ? labelFn(it) : it.label, Math.floor((labelW - 10) / 6.3));
+      let x = labelW + 1;
+      const vis = SERIES.filter(s => it[s.key]);
+      vis.forEach((s, si) => {
+        let w = plotW * it[s.key] / max; const gp = si > 0 ? 2 : 0; w = Math.max(1, w - gp); x += gp;
+        const last = si === vis.length - 1, r = last ? Math.min(4, barH / 2, w) : 0;
+        const d = last ? `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + barH - r}Q${x + w},${y + barH} ${x + w - r},${y + barH}H${x}Z` : `M${x},${y}H${x + w}V${y + barH}H${x}Z`;
+        svgEl('path', { d, fill: s.color, class: 'mark' }, g);
+        x += w;
+      });
+      svgEl('text', { x: x + 6, y: y + barH / 2 + 4, 'font-size': 12, 'font-weight': 600, fill: 'var(--ink)' }, g).textContent = fmtInt.format(it.total);
+      tipOn(g, (e) => {
+        const n = [el('div', 'v', `${fmtInt.format(it.total)} changes`), el('div', 'k', it.label + (it.sub ? ` · ${it.sub}` : ''))];
+        SERIES.forEach(s => { const r = el('div', 'row'); const l = el('span'); const k = el('span', 'key'); k.style.background = s.color; l.append(k, document.createTextNode(s.label)); r.append(l, el('span', 'n', fmtInt.format(it[s.key]))); n.push(r); });
+        n.push(el('div', 'hint', 'click to list'));
+        showTipNodes(e, n);
+      });
+      clickable(g, () => onClick(it));
+    });
+    host.replaceChildren(svg);
+    const tw = el('div'); dataTable(tw, ['Name', 'Created', 'Updated', 'Deleted', 'Total'], items.map(it => [it.label + (it.sub ? ` (${it.sub})` : ''), ...SERIES.map(s => fmtInt.format(it[s.key])), fmtInt.format(it.total)]));
+    tableHost.replaceChildren(tw.firstChild);
+  }
+  function aggregate(ch, keyFn, subFn) {
+    const m = new Map();
+    ch.forEach(c => { const s = seriesOf(c.ct); if (!s) return; const k = keyFn(c); const e = m.get(k) || { label: k, sub: subFn ? subFn(c) : '', Create: 0, Update: 0, Delete: 0, total: 0 }; e[s]++; e.total++; m.set(k, e); });
+    return [...m.values()].sort((a, b) => b.total - a.total).slice(0, 12);
+  }
+
+  // ------------------------------------------------------- change table ---
+  function renderChanges(ch) {
+    const rows = ch.filter(focusMatch);
+    viewChanges = rows;
+    $('chgTitle').textContent = focus ? focus.label : 'Change log';
+    $('chgSub').textContent = `${fmtInt.format(rows.length)} changes`;
+    const chip = $('focusChip'); chip.replaceChildren();
+    if (focus) {
+      const c = el('span', 'focus-chip'); c.append(el('span', '', focus.label));
+      const x = el('button', '', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Clear selection'); x.addEventListener('click', () => setFocus(null));
+      c.append(x); chip.append(c);
+    }
+    const cols = [
+      { key: 'when', label: 'When (UTC)', get: c => +c.when, desc: true },
+      { key: 'ct', label: 'Change', get: c => c.ct },
+      { key: 'res', label: 'Resource', get: c => c.name.toLowerCase() },
+      { key: 'rg', label: 'Resource group · subscription', get: c => `${c.subName} ${c.rg}`.toLowerCase() },
+      { key: 'who', label: 'Changed by', get: c => c.callerName.toLowerCase() },
+      { key: 'how', label: 'Via' },
+      { key: 'props', label: 'What changed' },
+    ];
+    sortHeader($('chgHead'), cols, chgSort, () => renderChanges(ch));
+    const body = $('chgBody'); body.replaceChildren();
+    const sorted = sortBy(rows, cols, chgSort);
+    const frag = document.createDocumentFragment();
+    sorted.slice(0, chgPage).forEach(c => {
+      const tr = el('tr');
+      tr.append(el('td', 'nowrap', fmtDT(c.when)));
+      const ct = el('td'); ct.append(ctPill(c.ct)); if (c.status && c.status !== 'Succeeded') ct.append(el('div', 'muted small', c.status)); tr.append(ct);
+      const r = el('td', 'res');
+      const nb = el('button', 'link', c.name || c.id); nb.type = 'button'; nb.title = c.id;
+      nb.addEventListener('click', () => setFocus({ kind: 'resource', value: c.id.toLowerCase(), label: `History of ${c.name}` }));
+      r.append(nb, el('div', 'muted small', shortType(c.type) + (c.ct !== 'Delete' && !c.exists && c.ct !== 'Deployment' ? ' · since deleted' : '')));
+      tr.append(r);
+      const rg = el('td', 'wide'); rg.append(el('div', '', c.rg || '—'), el('div', 'muted small', c.subName)); tr.append(rg);
+      const w = el('td', 'wide'); w.append(el('div', '', c.callerName));
+      w.append(el('div', 'muted small', c.callerType + (c.callerType === 'User' && c.caller !== c.callerName ? ` · ${c.caller}` : '')));
+      tr.append(w);
+      const how = el('td', 'wide');
+      if (c.deployment) { const db = el('button', 'link small', `Deployment: ${c.deployment}`); db.type = 'button'; db.addEventListener('click', () => setFocus({ kind: 'deployment', value: c.deployment, label: `Deployment ${c.deployment}` })); how.append(db); }
+      if (c.via) how.append(el('div', 'small', c.via));
+      if (c.ip) how.append(el('div', 'muted small', c.ip));
+      if (!how.childNodes.length) how.append(el('span', 'muted', '—'));
+      tr.append(how);
+      const p = el('td', 'wide');
+      if (c.props.length) { c.props.slice(0, 6).forEach(x => p.append(el('span', 'tag', x))); if (c.props.length > 6) p.append(el('span', 'muted small', `+${c.props.length - 6}`)); }
+      else p.append(el('span', 'muted small', c.opName && c.opName !== c.op ? c.opName : shortType(c.op)));
+      tr.append(p);
+      frag.append(tr);
+    });
+    body.append(frag);
+    if (!sorted.length) { const tr = el('tr'); const td = el('td', 'muted', 'No changes match.'); td.colSpan = cols.length; tr.append(td); body.append(tr); }
+    const more = $('chgMore'); more.replaceChildren();
+    if (sorted.length > chgPage) { more.append(el('span', '', `Showing ${fmtInt.format(chgPage)} of ${fmtInt.format(sorted.length)}`)); const b = el('button', '', 'Show more'); b.type = 'button'; b.addEventListener('click', () => { chgPage += 500; renderChanges(ch); }); more.append(b); }
+  }
+
+  // ----------------------------------------------------- resource table ---
+  function renderResources() {
+    const sub = $('fSub').value, q = $('fSearch').value.trim().toLowerCase(), mode = $('fRes').value, from = periodStart();
+    let rs = RESOURCES.filter(r => (!sub || r.sub === sub) && (!q || `${r.name} ${r.rg} ${r.type} ${r.createdBy} ${r.changedBy}`.toLowerCase().includes(q)));
+    if (mode === 'created') rs = rs.filter(r => r.created && from && r.created >= from);
+    if (mode === 'changed') rs = rs.filter(r => r.changed && from && r.changed >= from && r.changedBy);
+    if (mode === 'unknown') rs = rs.filter(r => !r.createdBy && r.type !== 'Microsoft.Resources/resourceGroups');
+    if (focus && focus.kind === 'caller') rs = rs.filter(r => r.createdBy === focus.value || r.changedBy === focus.value);
+    if (focus && focus.kind === 'type') rs = rs.filter(r => r.type === focus.value);
+    $('resSub').textContent = `${fmtInt.format(rs.length)} resources${focus && (focus.kind === 'caller' || focus.kind === 'type') ? ' · ' + focus.label : ''}. Creator comes from the Activity Log, or a CreatedBy tag for older resources.`;
+    const cols = [
+      { key: 'name', label: 'Resource', get: r => r.name.toLowerCase() },
+      { key: 'rg', label: 'Resource group · subscription', get: r => `${r.subName} ${r.rg}`.toLowerCase() },
+      { key: 'created', label: 'Created', get: r => r.created ? +r.created : 0, desc: true },
+      { key: 'createdBy', label: 'Created by', get: r => (r.createdBy || '~').toLowerCase() },
+      { key: 'changed', label: 'Last changed', get: r => r.changed ? +r.changed : 0, desc: true },
+      { key: 'changedBy', label: 'Last changed by', get: r => (r.changedBy || '~').toLowerCase() },
+      { key: 'n', label: 'Changes', get: r => r.n, desc: true },
+    ];
+    sortHeader($('resHead'), cols, resSort, renderResources);
+    const body = $('resBody'); body.replaceChildren();
+    const sorted = sortBy(rs, cols, resSort);
+    const frag = document.createDocumentFragment();
+    sorted.slice(0, resPage).forEach(r => {
+      const tr = el('tr');
+      const n = el('td', 'res'); const nb = el('button', 'link', r.name); nb.type = 'button'; nb.title = r.id;
+      nb.addEventListener('click', () => setFocus({ kind: 'resource', value: r.id.toLowerCase(), label: `History of ${r.name}` }));
+      n.append(nb, el('div', 'muted small', shortType(r.type) + (r.location ? ` · ${r.location}` : ''))); tr.append(n);
+      const rg = el('td', 'wide'); rg.append(el('div', '', r.rg || '—'), el('div', 'muted small', r.subName)); tr.append(rg);
+      tr.append(el('td', 'nowrap', r.created ? fmtD(r.created) : '—'));
+      const cb = el('td', 'wide'); cb.append(el('div', r.createdBy ? '' : 'muted', r.createdBy || 'Unknown')); if (r.createdSrc) cb.append(el('div', 'muted small', r.createdSrc)); tr.append(cb);
+      tr.append(el('td', 'nowrap', r.changed ? fmtD(r.changed) : '—'));
+      tr.append(el('td', 'wide' + (r.changedBy ? '' : ' muted'), r.changedBy || '—'));
+      tr.append(el('td', 'num', r.n || '–'));
+      frag.append(tr);
+    });
+    body.append(frag);
+    if (!sorted.length) { const tr = el('tr'); const td = el('td', 'muted', 'No resources match.'); td.colSpan = cols.length; tr.append(td); body.append(tr); }
+    const more = $('resMore'); more.replaceChildren();
+    if (sorted.length > resPage) { more.append(el('span', '', `Showing ${fmtInt.format(resPage)} of ${fmtInt.format(sorted.length)}`)); const b = el('button', '', 'Show more'); b.type = 'button'; b.addEventListener('click', () => { resPage += 500; renderResources(); }); more.append(b); }
+  }
+
+  function renderSubs() {
+    const head = $('subHead'); head.replaceChildren(...['Subscription', 'Change events', 'Resources', 'Status'].map(h => el('th', '', h)));
+    const body = $('subBody'); body.replaceChildren();
+    const subs = SUBS.length ? SUBS : [...new Set(CHANGES.map(c => c.sub))].map(id => ({ id, name: CHANGES.find(c => c.sub === id).subName, events: CHANGES.filter(c => c.sub === id).length, resources: 0, errors: '' }));
+    [...subs].sort((a, b) => (b.errors ? 1 : 0) - (a.errors ? 1 : 0) || String(a.name).localeCompare(String(b.name))).forEach(s => {
+      const tr = el('tr');
+      const n = el('td'); n.append(el('div', '', s.name || s.id), el('div', 'muted small', s.id)); tr.append(n);
+      tr.append(el('td', 'num', fmtInt.format(s.events)), el('td', 'num', fmtInt.format(s.resources)));
+      const st = el('td', 'wide'); st.style.maxWidth = '640px';
+      if (s.errors) { const p = el('span', 'ct'); const d = el('span', 'sw'); d.style.background = 'var(--warning)'; p.append(d, document.createTextNode('Incomplete')); st.append(p, el('div', 'muted small', s.errors)); }
+      else st.append(el('span', 'muted', 'OK'));
+      tr.append(st); body.append(tr);
+    });
+  }
+
+  function renderBanners() {
+    const b = $('banners'); b.replaceChildren();
+    const errs = SUBS.filter(s => s.errors);
+    if (errs.length) { const d = el('div', 'banner'); d.append(el('span', 'ico', '!'), el('div', '', `${errs.length} subscription(s) couldn't be fully read (usually missing Reader access), so their changes may be missing. See the Subscriptions table.`)); b.append(d); }
+  }
+
+  function render() {
+    if (!CHANGES.length && !RESOURCES.length) return;
+    hideTip();
+    const ch = scopedChanges(false);
+    renderBanners(); renderTiles(ch); renderDaily(ch);
+    stackedBars($('chCallers'), $('tbCallers'), $('lgCallers'), aggregate(ch, c => c.callerName, c => c.callerType),
+      it => setFocus({ kind: 'caller', value: it.label, label: `Changes by ${it.label}` }), it => focus && focus.kind === 'caller' && focus.value === it.label);
+    stackedBars($('chTypes'), $('tbTypes'), $('lgTypes'), aggregate(ch, c => c.type),
+      it => setFocus({ kind: 'type', value: it.label, label: `Changes to ${shortType(it.label)}` }), it => focus && focus.kind === 'type' && focus.value === it.label, it => shortType(it.label));
+    // the resource history view shows every change type for that resource
+    renderChanges(focus && (focus.kind === 'resource' || focus.kind === 'deployment') ? scopedChanges(true) : ch);
+    renderResources(); renderSubs();
+  }
+
+  function exportRows() {
+    if (!viewChanges.length) return;
+    const cols = ['EventTime', 'ChangeType', 'ResourceName', 'ResourceType', 'ResourceGroup', 'SubscriptionName', 'SubscriptionId', 'CallerName', 'Caller', 'CallerType', 'CallerApp', 'ClientIp', 'Deployment', 'Operation', 'ChangedProperties', 'ResourceId', 'Status', 'CorrelationId'];
+    const esc = (v) => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    const lines = [cols.join(',')]; viewChanges.forEach(c => lines.push(cols.map(k => esc(String(c.raw[k] ?? ''))).join(',')));
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'azure-changes.csv'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ------------------------------------------------------------- sample ----
+  function sampleCsv() {
+    let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const pick = (a) => a[Math.floor(rnd() * a.length)];
+    const now = Date.UTC(2026, 10, 8, 9, 0, 0), start = now - 30 * DAY;
+    const iso = (t) => t ? new Date(t).toISOString().slice(0, 19) + 'Z' : '';
+    const guid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.floor(rnd() * 16); return (c === 'x' ? r : (r & 3) | 8).toString(16); });
+    const subs = [['Prod - Platform', guid()], ['Prod - Applications', guid()], ['Dev / Test', guid()], ['Sandbox', guid()], ['Connectivity', guid()]];
+    const people = [['Alice Morgan', 'alice.morgan@contoso.com'], ['Bob Patel', 'bob.patel@contoso.com'], ['Carol Nguyen', 'carol.nguyen@contoso.com'], ['Dave Wilson', 'dave.wilson@contoso.com'], ['Erin Brooks', 'erin.brooks@contoso.com']];
+    const apps = [['GitHub Actions - infra', 'Service principal'], ['Terraform Pipeline', 'Service principal'], ['Azure DevOps - apps', 'Service principal'], ['mi-automation', 'Managed identity']];
+    const via = ['Azure Portal', 'Microsoft Azure CLI', 'Microsoft Azure PowerShell'];
+    const types = [
+      ['Microsoft.Compute/virtualMachines', 'vm', ['properties.hardwareProfile.vmSize', 'tags.owner', 'properties.storageProfile.osDisk.diskSizeGB']],
+      ['Microsoft.Storage/storageAccounts', 'st', ['properties.minimumTlsVersion', 'properties.allowBlobPublicAccess', 'tags.env']],
+      ['Microsoft.Web/sites', 'app', ['properties.siteConfig.appSettings', 'properties.httpsOnly']],
+      ['Microsoft.KeyVault/vaults', 'kv', ['properties.accessPolicies', 'properties.networkAcls.defaultAction']],
+      ['Microsoft.Network/networkSecurityGroups', 'nsg', ['properties.securityRules']],
+      ['Microsoft.Network/virtualNetworks', 'vnet', ['properties.subnets', 'properties.addressSpace']],
+      ['Microsoft.Network/publicIPAddresses', 'pip', ['tags.env']],
+      ['Microsoft.Sql/servers/databases', 'sqldb', ['sku.name', 'properties.maxSizeBytes']],
+      ['Microsoft.Authorization/roleAssignments', 'ra', []],
+      ['Microsoft.ContainerService/managedClusters', 'aks', ['properties.agentPoolProfiles', 'properties.kubernetesVersion']],
+    ];
+    const rgs = ['rg-web-prod', 'rg-data-prod', 'rg-network-hub', 'rg-shared', 'rg-sandbox-alice', 'rg-aks-dev', 'rg-identity'];
+    const rgSub = { 'rg-web-prod': 1, 'rg-data-prod': 1, 'rg-network-hub': 4, 'rg-shared': 0, 'rg-sandbox-alice': 3, 'rg-aks-dev': 2, 'rg-identity': 0 };
+    const res = [];   // inventory
+    for (let i = 0; i < 140; i++) {
+      const [type, pre] = pick(types); const rg = pick(rgs); const s = subs[rgSub[rg]];
+      const created = now - (40 + rnd() * 900) * DAY;
+      res.push({ id: `/subscriptions/${s[1]}/resourceGroups/${rg}/providers/${type}/${pre}-${rg.slice(3)}-${i}`, name: `${pre}-${rg.slice(3)}-${i}`, type, sub: s, rg, created, exists: true, tagBy: rnd() < 0.25 ? pick(people)[1] : '' });
+    }
+    const head = ['RecordType', 'EventTime', 'SubscriptionId', 'SubscriptionName', 'ResourceGroup', 'ResourceName', 'ResourceType', 'ResourceId', 'Location', 'ChangeType', 'Operation', 'OperationName', 'Status', 'Caller', 'CallerName', 'CallerType', 'CallerApp', 'ClientIp', 'Deployment', 'CorrelationId', 'ChangedProperties', 'ResourceExists', 'CreatedTime', 'CreatedBy', 'CreatedBySource', 'LastChangedTime', 'LastChangedBy', 'ChangesInPeriod', 'Events', 'Resources', 'Errors', 'PeriodStartUtc', 'ReportGeneratedUtc'];
+    const rows = []; const common = { PeriodStartUtc: iso(start), ReportGeneratedUtc: iso(now) };
+    const row = (o) => rows.push(head.map(h => o[h] ?? common[h] ?? ''));
+    const changes = [];
+    const who = () => { if (rnd() < 0.55) { const p = pick(people); return { name: p[0], id: p[1], type: 'User', via: pick(via), ip: `203.0.113.${Math.floor(rnd() * 200)}` }; } const a = pick(apps); return { name: a[0], id: guid(), type: a[1], via: '', ip: '' }; };
+    const ev = (t, r, ct, w, extra = {}) => changes.push({ t, r, ct, w, ...extra });
+    for (let d = 0; d < 30; d++) {
+      const dayT = start + d * DAY; const wd = new Date(dayT).getUTCDay(); const n = (wd === 0 || wd === 6) ? Math.floor(rnd() * 4) : 6 + Math.floor(rnd() * 18);
+      for (let k = 0; k < n; k++) {
+        const t = dayT + (7 + rnd() * 11) * 3600000; const w = who(); const roll = rnd();
+        if (roll < 0.62) { const r = pick(res.filter(x => x.exists && x.created < t)); if (r) ev(t, r, 'Update', w, { props: r.type === 'Microsoft.Authorization/roleAssignments' ? [] : [pick(types.find(x => x[0] === r.type)[2])] }); }
+        else if (roll < 0.9) {
+          const [type, pre] = pick(types); const rg = pick(rgs); const s = subs[rgSub[rg]];
+          const nm = `${pre}-${rg.slice(3)}-${res.length}`; const r = { id: `/subscriptions/${s[1]}/resourceGroups/${rg}/providers/${type}/${nm}`, name: nm, type, sub: s, rg, created: t, exists: true };
+          res.push(r);
+          const dep = w.type !== 'User' || rnd() < 0.3 ? `deploy-${pre}-${Math.floor(rnd() * 900 + 100)}` : '';
+          if (dep) ev(t - 60000, { id: `/subscriptions/${s[1]}/resourceGroups/${rg}/providers/Microsoft.Resources/deployments/${dep}`, name: dep, type: 'Microsoft.Resources/deployments', sub: s, rg, exists: false }, 'Deployment', w);
+          ev(t, r, 'Create', w, { dep });
+        } else { const r = pick(res.filter(x => x.exists && x.created < t)); if (r) { r.exists = false; ev(t, r, 'Delete', w); } }
+      }
+    }
+    // A sandbox clean-up spike
+    const cleaner = { name: 'Erin Brooks', id: 'erin.brooks@contoso.com', type: 'User', via: 'Microsoft Azure CLI', ip: '198.51.100.7' };
+    res.filter(r => r.sub[0] === 'Sandbox' && r.exists).slice(0, 14).forEach((r, i) => { r.exists = false; ev(now - 6 * DAY + i * 60000, r, 'Delete', cleaner); });
+    changes.sort((a, b) => a.t - b.t);
+    changes.forEach(c => {
+      const r = c.r;
+      row({ RecordType: 'Change', EventTime: iso(c.t), SubscriptionId: r.sub[1], SubscriptionName: r.sub[0], ResourceGroup: r.rg, ResourceName: r.name, ResourceType: r.type, ResourceId: r.id, Location: 'uksouth',
+        ChangeType: c.ct === 'Create' && !r.exists ? 'Create or update' : c.ct, Operation: `${r.type}/${c.ct === 'Delete' ? 'delete' : 'write'}`, Status: 'Succeeded',
+        Caller: c.w.id, CallerName: c.w.name, CallerType: c.w.type, CallerApp: c.w.via, ClientIp: c.w.ip, Deployment: c.dep || '', ChangedProperties: (c.props || []).join('; '), ResourceExists: r.exists ? 'True' : 'False' });
+    });
+    res.filter(r => r.exists).forEach(r => {
+      const hist = changes.filter(c => c.r === r && c.ct !== 'Deployment');
+      const cr = hist.find(c => c.ct === 'Create'); const last = hist[hist.length - 1];
+      row({ RecordType: 'Resource', SubscriptionId: r.sub[1], SubscriptionName: r.sub[0], ResourceGroup: r.rg, ResourceName: r.name, ResourceType: r.type, ResourceId: r.id, Location: 'uksouth', ResourceExists: 'True',
+        CreatedTime: iso(r.created), CreatedBy: cr ? cr.w.name : r.tagBy || '', CreatedBySource: cr ? 'Activity Log' : r.tagBy ? "Tag 'CreatedBy'" : 'Before report period',
+        LastChangedTime: last ? iso(last.t) : iso(r.created), LastChangedBy: last ? last.w.name : '', ChangesInPeriod: hist.length });
+    });
+    subs.forEach(s => row({ RecordType: 'Subscription', SubscriptionId: s[1], SubscriptionName: s[0], Events: changes.filter(c => c.r.sub === s).length, Resources: res.filter(r => r.sub === s && r.exists).length,
+      Errors: s[0] === 'Connectivity' ? 'Activity Log 2026-10-09T09:00:00Z: HTTP 403 : The client does not have authorization to perform action Microsoft.Insights/eventtypes/values/read' : '' }));
+    const esc = (v) => { v = String(v); return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+    return [head, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+  }
+
+  // ------------------------------------------------------------- wiring ----
+  function readFile(f) { if (!f) return; const rd = new FileReader(); rd.onload = () => load(String(rd.result), f.name); rd.readAsText(f); }
+  $('btnLoad').addEventListener('click', () => $('file').click());
+  $('file').addEventListener('change', e => { readFile(e.target.files[0]); e.target.value = ''; });
+  $('btnSample').addEventListener('click', () => load(sampleCsv(), 'Sample data'));
+  $('btnExport').addEventListener('click', exportRows);
+  ['fSub', 'fDays', 'fCaller', 'fType'].forEach(id => $(id).addEventListener('change', () => { chgPage = 200; resPage = 200; render(); }));
+  $('fRes').addEventListener('change', () => { resPage = 200; renderResources(); });
+  let st; $('fSearch').addEventListener('input', () => { clearTimeout(st); st = setTimeout(render, 200); });
+  ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement) $('drop').classList.remove('over'); }));
+  document.addEventListener('drop', e => readFile(e.dataTransfer.files[0]));
+  let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (CHANGES.length) render(); }, 150); });
+})();
+</script>
+</body>
+</html>
