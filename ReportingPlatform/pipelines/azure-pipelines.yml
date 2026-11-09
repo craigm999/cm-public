@@ -198,6 +198,6 @@ stages:
                       if ($LASTEXITCODE) { throw 'Deployment failed' }
                       $functions = az functionapp function list -g "$(resourceGroupName)" -n "$(functionAppName)" --query "[].name" -o tsv
                       Write-Host "Functions registered:`n$functions"
-                      foreach ($expected in 'Api', 'Web', 'ReportLeastPrivilege', 'ReportAzureChanges', 'ReportAppSignIns', 'ReportConditionalAccess') {
+                      foreach ($expected in 'Api', 'Web', 'ReportLeastPrivilege', 'ReportAzureChanges', 'ReportAppSignIns', 'ReportConditionalAccess', 'ReportAuthMethods') {
                         if (-not ($functions | Where-Object { $_ -like "*/$expected" })) { throw "Function '$expected' isn't registered after deployment." }
                       }

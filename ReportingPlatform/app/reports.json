@@ -8,7 +8,9 @@
       "script": "Entra/Get-EntraLeastPrivilegeReport.ps1",
       "dashboard": "Entra/LeastPrivilegeDashboard.html",
       "auth": "graph",
-      "parameters": { "Days": 30 }
+      "parameters": {
+        "Days": 30
+      }
     },
     {
       "id": "azure-changes",
@@ -17,7 +19,18 @@
       "script": "Azure/Get-AzureResourceChangeReport.ps1",
       "dashboard": "Azure/AzureChangeDashboard.html",
       "auth": "managedIdentityParameter",
-      "parameters": { "Days": 30 }
+      "parameters": {
+        "Days": 30
+      }
+    },
+    {
+      "id": "auth-methods",
+      "title": "Authentication methods",
+      "description": "Registered sign-in methods per user and how strong they are.",
+      "script": "Entra/Get-EntraAuthMethodsReport.ps1",
+      "dashboard": "Entra/AuthMethodsDashboard.html",
+      "auth": "graph",
+      "parameters": {}
     },
     {
       "id": "app-signins",

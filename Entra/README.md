@@ -137,6 +137,41 @@ least-privileged active role that grants the permission was used.
 
 ---
 
+# Authentication methods (user registration details)
+
+## 1. Generate the CSV
+
+```powershell
+.\Get-EntraAuthMethodsReport.ps1 -TenantId contoso.onmicrosoft.com -OutputPath .\auth-methods.csv
+```
+
+Needs `AuditLog.Read.All` and `Directory.Read.All` (as a user: Reports Reader, Security Reader or
+Global Reader), and Entra ID P1/P2. One row per user with: account enabled/disabled, member/guest,
+admin flag, department, last successful sign-in, every registered method, the strongest method tier,
+MFA / passwordless / SSPR registration, and the default MFA method.
+
+Microsoft's registration report doesn't cover **disabled accounts**: they're listed with no method
+data unless you add `-IncludeDisabledUserMethods`, which reads their methods from each user's
+authentication methods (needs `UserAuthenticationMethod.Read.All`).
+
+Strength tiers: **Phishing-resistant** (FIDO2, passkeys, Windows Hello for Business, macOS platform
+credential, certificate-based auth) → **Passwordless** (Authenticator phone sign-in) → **App-based
+MFA** (Authenticator push, OTP codes) → **Phone (SMS / voice)** → **No MFA method**.
+
+## 2. View it
+
+Open `AuthMethodsDashboard.html` and drop the CSV onto it (or **Sample data** for a demo).
+
+- Show enabled, disabled or all accounts (enabled only by default); members, guests or both; admins only.
+- **Method filter**: click a method once to show only users who have it, twice to hide users who
+  have it (e.g. show users *with* SMS but *without* Authenticator), three times to clear.
+- Headline figures: MFA and phishing-resistant coverage, phone-only users, users with no MFA method,
+  admins without a phishing-resistant method.
+- Charts: strongest method per user, default MFA method, users per method; click to drill in.
+- User table with every method, sortable, with **Export these rows** for the filtered list.
+
+---
+
 ## Running on a schedule
 
 These reports can be run automatically and published in a private, Entra-protected portal: see [ReportingPlatform](../ReportingPlatform/README.md).

@@ -114,6 +114,10 @@ build time, so they can still be run locally and the dashboards opened offline w
 | Host storage | Blob Data Owner, Queue + Table Data Contributor | Functions runtime |
 | Application Insights | Monitoring Metrics Publisher | telemetry |
 
+Optional: `UserAuthenticationMethod.Read.All` (setup script `-IncludeUserAuthenticationMethodRead`),
+only if you set `"IncludeDisabledUserMethods": true` in the `auth-methods` entry of `reports.json` so
+the authentication methods report also covers disabled accounts.
+
 It deliberately does **not** have `RoleAssignmentSchedule.ReadWrite.Directory`: for an application
 that permission can create role assignments, i.e. escalate to Global Administrator. The least
 privilege report therefore rebuilds PIM activation history from the audit log (shown as a warning
@@ -134,6 +138,7 @@ tfvars; they're app settings referenced by each timer.
 | Azure changes | Daily 02:30 |
 | Applications | Mondays 04:00 |
 | Conditional Access | Mondays 04:30 |
+| Authentication methods | Daily 03:00 |
 
 ## Adding a report (= a new tab)
 

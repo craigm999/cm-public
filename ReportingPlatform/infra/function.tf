@@ -63,6 +63,7 @@ resource "azurerm_function_app_flex_consumption" "reports" {
     "SCHEDULE_AZURE_CHANGES"      = var.report_schedules.azure_changes
     "SCHEDULE_APP_SIGNINS"        = var.report_schedules.app_signins
     "SCHEDULE_CONDITIONAL_ACCESS" = var.report_schedules.conditional_access
+    "SCHEDULE_AUTH_METHODS"       = var.report_schedules.auth_methods
   }
 
   # App Service authentication (Easy Auth) with Entra ID. No client secret: sign-in uses the

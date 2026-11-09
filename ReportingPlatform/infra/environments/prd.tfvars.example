@@ -53,6 +53,7 @@ private_dns_zone_ids = {
 #   azure_changes      = "0 30 2 * * *"   # daily 02:30 (default)
 #   app_signins        = "0 0 4 * * 1"    # Mondays 04:00 (default)
 #   conditional_access = "0 30 4 * * 1"   # Mondays 04:30 (default)
+#   auth_methods       = "0 0 3 * * *"    # daily 03:00 (default)
 # }
 
 # Use an existing Log Analytics workspace instead of creating one.

@@ -41,6 +41,11 @@
 .PARAMETER ManagedIdentityPrincipalId
     Principal (object) ID of the managed identity (Terraform output managed_identity_principal_id).
 
+.PARAMETER IncludeUserAuthenticationMethodRead
+    Also grant UserAuthenticationMethod.Read.All, needed only if the authentication methods
+    report runs with IncludeDisabledUserMethods (reports.json parameters) to read disabled
+    users' methods.
+
 .PARAMETER ManagementGroupId
     Management group to grant Azure Reader at. Defaults to the tenant root group.
 
@@ -63,6 +68,7 @@ param(
     # Permissions
     [string]$ManagedIdentityPrincipalId,
     [string]$ManagementGroupId,
+    [switch]$IncludeUserAuthenticationMethodRead,
     [switch]$SkipAzureReader
 )
 
@@ -190,6 +196,7 @@ if ($Stage -eq 'AppRegistration') {
 if ($Stage -eq 'Permissions') {
     if (-not $ManagedIdentityPrincipalId) { throw '-ManagedIdentityPrincipalId is required for -Stage Permissions (Terraform output managed_identity_principal_id).' }
     $ctx = Connect-Graph @('AppRoleAssignment.ReadWrite.All', 'Application.Read.All')
+    if ($IncludeUserAuthenticationMethodRead) { $GraphReadPermissions += 'UserAuthenticationMethod.Read.All' }
 
     $mi = Invoke-Graph -Path "/servicePrincipals/$ManagedIdentityPrincipalId`?`$select=id,displayName,servicePrincipalType"
     if ($mi['servicePrincipalType'] -ne 'ManagedIdentity') { throw "$ManagedIdentityPrincipalId is not a managed identity (type $($mi['servicePrincipalType']))." }

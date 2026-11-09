@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Authentication Methods</title>
+<!--
+  Dashboard for the CSV produced by Get-EntraAuthMethodsReport.ps1.
+  Fully self-contained: no network requests, the CSV is read locally in the browser.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ee;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6; --accent-wash: rgba(42,120,214,0.10);
+    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b; --critical-text: #b42f2f;
+    /* strength tiers: one blue ramp, darker = stronger; red = no MFA; grey = unknown */
+    --t1: #104281; --t2: #1c5cab; --t3: #3987e5; --t4: #86b6ef; --t5: #d03b3b; --t6: #c3c2b7;
+    --t1-ink: #ffffff; --t2-ink: #ffffff; --t3-ink: #ffffff; --t4-ink: #0b0b0b; --t5-ink: #ffffff; --t6-ink: #0b0b0b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+      --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5; --accent-wash: rgba(57,135,229,0.16); --critical-text: #e66767;
+      --t1: #b7d3f6; --t2: #86b6ef; --t3: #3987e5; --t4: #1c5cab; --t5: #d03b3b; --t6: #6b6a66;
+      --t1-ink: #0b0b0b; --t2-ink: #0b0b0b; --t3-ink: #ffffff; --t4-ink: #ffffff; --t5-ink: #ffffff; --t6-ink: #f0efec;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --accent-wash: rgba(57,135,229,0.16); --critical-text: #e66767;
+    --t1: #b7d3f6; --t2: #86b6ef; --t3: #3987e5; --t4: #1c5cab; --t5: #d03b3b; --t6: #6b6a66;
+    --t1-ink: #0b0b0b; --t2-ink: #0b0b0b; --t3-ink: #ffffff; --t4-ink: #ffffff; --t5-ink: #ffffff; --t6-ink: #f0efec;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--ink-2); margin: 0; }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .card-sub { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; }
+  button, select, input[type=search] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; }
+  button { cursor: pointer; }
+  button:hover { background: var(--surface-2); }
+  button.primary { background: var(--series-1); color: #fff; border-color: transparent; }
+  button.primary:hover { filter: brightness(1.08); }
+  button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; margin-bottom: 12px; }
+  #drop { border: 1.5px dashed var(--axis); border-radius: 12px; padding: 48px 16px; text-align: center; background: var(--surface); color: var(--ink-2); }
+  #drop.over { border-color: var(--series-1); background: var(--accent-wash); }
+  #drop strong { color: var(--ink); display: block; font-size: 16px; margin-bottom: 6px; }
+  #drop code { background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
+  .filters label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .filters input[type=search] { min-width: 220px; flex: 1 1 220px; max-width: 380px; }
+  .methods { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 16px; }
+  .methods .lbl { color: var(--ink-2); font-size: 13px; margin-right: 4px; }
+  .mchip { font-size: 12px; padding: 4px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; }
+  .mchip .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .mchip .mark { width: 14px; text-align: center; font-weight: 700; }
+  .mchip .mark:empty { display: none; }
+  .mchip[data-state="has"] { border-color: var(--good); background: rgba(12,163,12,0.10); }
+  .mchip[data-state="not"] { border-color: var(--critical); background: rgba(208,59,59,0.10); text-decoration: line-through; text-decoration-color: var(--critical); }
+  .mchip .sw { width: 8px; height: 8px; border-radius: 2px; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .linkbtn { border: 0; background: none; padding: 0 4px; color: var(--ink-2); text-decoration: underline; font-size: 12px; }
+
+  .tiles { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .tile { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
+  button.tile:hover { background: var(--surface-2); }
+  .tile[aria-pressed="true"] { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); background: var(--accent-wash); }
+  .tile .label { color: var(--ink-2); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .tile .value { font-size: 30px; font-weight: 600; line-height: 1.15; }
+  .tile .meta { color: var(--muted); font-size: 12px; }
+  .tile.hero .value { font-size: 48px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; display: inline-block; }
+
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); margin: 0 0 10px; padding: 0; list-style: none; }
+  .legend li { display: flex; align-items: center; gap: 6px; }
+  .seg { display: flex; gap: 2px; height: 28px; margin: 4px 0 12px; }
+  .seg > div { border-radius: 4px; display: flex; align-items: center; padding: 0 8px; font-size: 12px; font-weight: 600; white-space: nowrap; min-width: 0; cursor: pointer; }
+  .seg > div:hover { filter: brightness(1.08); }
+  .seg > div.dim { opacity: 0.35; }
+  .tier-rows { display: grid; grid-template-columns: auto 1fr auto auto; gap: 6px 12px; font-size: 13px; align-items: center; }
+  .tier-rows .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .tier-rows .pct { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 44px; }
+  .tier-rows button { text-align: left; border: 0; background: none; padding: 0; color: inherit; font: inherit; }
+  .tier-rows button:hover { text-decoration: underline; background: none; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .hit { cursor: pointer; }
+  .hit:hover .mark, .hit:focus .mark { filter: brightness(1.12); }
+  .hit:focus { outline: none; }
+  .hit:focus .mark { stroke: var(--ink); stroke-width: 1.5; }
+  details.data { margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+  details.data summary { cursor: pointer; }
+  details.data .table-scroll { margin-top: 8px; max-height: 300px; }
+
+  #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); opacity: 0; transition: opacity .1s; max-width: 320px; }
+  #tip .v { font-size: 14px; font-weight: 600; }
+  #tip .k { color: var(--ink-2); }
+  #tip .h { color: var(--muted); margin-top: 4px; }
+
+  .table-head { display: flex; flex-wrap: wrap; gap: 8px 12px; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .focus-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-wash); border: 1px solid var(--series-1); border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 13px; }
+  .focus-chip button { border: 0; background: transparent; padding: 0 6px; border-radius: 999px; font-size: 15px; line-height: 1; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; max-height: 680px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { position: sticky; top: 0; background: var(--surface-2); font-weight: 600; color: var(--ink-2); white-space: nowrap; z-index: 1; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th .arrow { color: var(--muted); margin-left: 4px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.name { min-width: 200px; }
+  td.name .upn { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  td.methods { min-width: 220px; max-width: 380px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; margin: 0 4px 4px 0; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+  .muted { color: var(--muted); }
+  .warn { color: var(--critical-text); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  .more { margin-top: 10px; color: var(--ink-2); font-size: 13px; display: flex; gap: 10px; align-items: center; }
+  .banner { border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--border); display: flex; gap: 10px; }
+  .banner .ico { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--warning); color: #0b0b0b; font-weight: 700; font-size: 12px; display: grid; place-items: center; margin-top: 1px; }
+  footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
+  footer p { margin: 4px 0; }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 640px) {
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tile.hero { grid-column: 1 / -1; }
+    .tile .value { font-size: 26px; } .tile.hero .value { font-size: 40px; }
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Authentication methods</h1>
+      <p class="sub" id="subtitle">Registered Entra sign-in methods per user, and how strong they are</p>
+    </div>
+    <div class="actions">
+      <input type="file" id="file" accept=".csv,text/csv" class="hidden">
+      <button class="primary" id="btnLoad" type="button">Load CSV…</button>
+      <button id="btnSample" type="button">Sample data</button>
+    </div>
+  </header>
+
+  <div id="drop">
+    <strong>Drop the authentication methods CSV here</strong>
+    Generate it with <code>.\Get-EntraAuthMethodsReport.ps1 -OutputPath .\auth-methods.csv</code>, then drop it here or use <em>Load CSV</em>.<br>
+    The file is read in your browser only; nothing is uploaded.
+  </div>
+
+  <main id="dash" class="hidden">
+    <div id="banners"></div>
+    <div class="filters" role="group" aria-label="Filters">
+      <label>Accounts
+        <select id="fEnabled"><option value="enabled" selected>Enabled only</option><option value="disabled">Disabled only</option><option value="all">All</option></select>
+      </label>
+      <label>Users
+        <select id="fType"><option value="all">Members &amp; guests</option><option value="member">Members</option><option value="guest">Guests</option></select>
+      </label>
+      <label><input type="checkbox" id="fAdmin"> Admins only</label>
+      <input type="search" id="fSearch" placeholder="Search name, UPN or department" aria-label="Search users">
+    </div>
+    <div class="methods" id="methods" role="group" aria-label="Filter by method"></div>
+
+    <section class="tiles" id="tiles" aria-label="Summary"></section>
+
+    <div class="grid2">
+      <section class="card">
+        <h2>Strongest method registered</h2>
+        <p class="card-sub">Each user counted once, by their strongest registered method. Click a tier to list those users.</p>
+        <ul class="legend" id="lgTier"></ul>
+        <div class="seg" id="segTier" role="group" aria-label="Users by strongest method"></div>
+        <div class="tier-rows" id="tierRows"></div>
+      </section>
+      <section class="card">
+        <h2>Default MFA method</h2>
+        <p class="card-sub">The method users are prompted with first (unless system-preferred MFA picks a stronger one).</p>
+        <div class="chart" id="chDefault"></div>
+        <details class="data"><summary>Show data</summary><div class="table-scroll" id="tbDefault"></div></details>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Methods registered</h2>
+      <p class="card-sub">Users with each method (a user can have several), coloured by strength tier. Click a bar to show only users with that method.</p>
+      <ul class="legend" id="lgMethods"></ul>
+      <div class="chart" id="chMethods"></div>
+      <details class="data"><summary>Show data</summary><div class="table-scroll" id="tbMethods"></div></details>
+    </section>
+
+    <section class="card">
+      <div class="table-head">
+        <div><h2 id="usrTitle">Users</h2><p class="card-sub" id="usrSub" style="margin:0"></p></div>
+        <div class="actions"><span id="focusChip"></span><button type="button" id="btnExport">Export these rows</button></div>
+      </div>
+      <div class="table-scroll"><table><thead><tr id="usrHead"></tr></thead><tbody id="usrBody"></tbody></table></div>
+      <div class="more" id="usrMore"></div>
+    </section>
+
+    <footer>
+      <p>Data from Microsoft Graph user registration details (refreshed by Microsoft periodically, so very recent changes may not show yet). That report doesn't cover disabled accounts: they show as Unknown unless the script ran with -IncludeDisabledUserMethods.</p>
+      <p>Phishing-resistant: FIDO2 keys, passkeys, Windows Hello for Business, macOS platform credential, certificate-based authentication. Phone methods (SMS / voice) are the weakest MFA. Email and security questions only count for self-service password reset.</p>
+    </footer>
+  </main>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const fmtInt = new Intl.NumberFormat();
+  const TIERS = [
+    { key: 'Phishing-resistant', color: 'var(--t1)', ink: 'var(--t1-ink)' },
+    { key: 'Passwordless', color: 'var(--t2)', ink: 'var(--t2-ink)' },
+    { key: 'App-based MFA', color: 'var(--t3)', ink: 'var(--t3-ink)' },
+    { key: 'Phone (SMS / voice)', color: 'var(--t4)', ink: 'var(--t4-ink)' },
+    { key: 'No MFA method', color: 'var(--t5)', ink: 'var(--t5-ink)' },
+    { key: 'Unknown', color: 'var(--t6)', ink: 'var(--t6-ink)' },
+  ];
+  const TIER = Object.fromEntries(TIERS.map(t => [t.key, t]));
+  const MFA_TIERS = new Set(['Phishing-resistant', 'Passwordless', 'App-based MFA', 'Phone (SMS / voice)']);
+  // method -> [label, tier]
+  const METHODS = {
+    fido2SecurityKey: ['FIDO2 security key', 'Phishing-resistant'], passKeyDeviceBound: ['Passkey (device-bound)', 'Phishing-resistant'],
+    passKeyDeviceBoundAuthenticator: ['Passkey in Authenticator', 'Phishing-resistant'], passKeyDeviceBoundWindowsHello: ['Passkey (Windows Hello)', 'Phishing-resistant'],
+    passKeySynced: ['Passkey (synced)', 'Phishing-resistant'], windowsHelloForBusiness: ['Windows Hello for Business', 'Phishing-resistant'],
+    macOsSecureEnclaveKey: ['macOS platform credential', 'Phishing-resistant'], platformCredential: ['Platform credential', 'Phishing-resistant'],
+    x509Certificate: ['Certificate (CBA)', 'Phishing-resistant'], certificateBasedAuthentication: ['Certificate (CBA)', 'Phishing-resistant'], x509CertificateMultiFactor: ['Certificate (CBA, MFA)', 'Phishing-resistant'],
+    microsoftAuthenticatorPasswordless: ['Authenticator passwordless', 'Passwordless'],
+    microsoftAuthenticatorPush: ['Authenticator push', 'App-based MFA'], softwareOneTimePasscode: ['Software OTP code', 'App-based MFA'],
+    hardwareOneTimePasscode: ['Hardware OTP token', 'App-based MFA'], externalAuthenticationMethod: ['External MFA', 'App-based MFA'],
+    mobilePhone: ['Mobile phone (SMS / voice)', 'Phone (SMS / voice)'], alternateMobilePhone: ['Alternate mobile phone', 'Phone (SMS / voice)'],
+    officePhone: ['Office phone', 'Phone (SMS / voice)'],
+    email: ['Email (SSPR only)', 'No MFA method'], securityQuestion: ['Security questions (SSPR only)', 'No MFA method'],
+    temporaryAccessPass: ['Temporary Access Pass', 'No MFA method'],
+  };
+  const mLabel = (m) => METHODS[m] ? METHODS[m][0] : m;
+  const mTier = (m) => METHODS[m] ? METHODS[m][1] : 'Unknown';
+  const DEFAULTS = { push: 'Authenticator push', oath: 'OTP code', sms: 'SMS', voiceMobile: 'Voice (mobile)', voiceAlternateMobile: 'Voice (alternate mobile)', voiceOffice: 'Voice (office)', none: 'None' };
+
+  let USERS = [], META = {};
+  let methodState = new Map();   // method -> 'has' | 'not'
+  let focus = null, page = 200;
+  let sort = { key: 'tier', dir: 1 };
+  let lastRows = [];
+
+  // ---------------------------------------------------------------- CSV ----
+  function parseCsv(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const rows = []; let row = []; let field = ''; let q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; } else field += c; }
+      else if (c === '"') q = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(field); field = ''; rows.push(row); row = []; }
+      else field += c;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    const head = rows.shift() || [];
+    return rows.filter(r => r.length > 1 || r[0]).map(r => { const o = {}; head.forEach((h, i) => o[h.trim()] = (r[i] ?? '').trim()); return o; });
+  }
+  const bool = (s) => /^true$/i.test(s || '');
+  const tri = (s) => s === '' || s == null ? null : bool(s);
+  const date = (s) => { if (!s) return null; const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z'); return isNaN(d) ? null : d; };
+  const fmtD = (d) => d ? d.toISOString().slice(0, 10) : '';
+
+  function load(text, source) {
+    const rows = parseCsv(text);
+    if (!rows.length || !('StrongestMethodTier' in rows[0]) || !('MethodsRegistered' in rows[0])) {
+      alert('This does not look like a Get-EntraAuthMethodsReport.ps1 CSV (missing StrongestMethodTier / MethodsRegistered columns).');
+      return;
+    }
+    USERS = rows.map((r, i) => ({
+      i, id: r.UserId, upn: r.UserPrincipalName, name: r.DisplayName || r.UserPrincipalName, type: (r.UserType || '').toLowerCase(),
+      enabled: bool(r.AccountEnabled), admin: tri(r.IsAdmin), dept: r.Department, title: r.JobTitle,
+      tier: TIER[r.StrongestMethodTier] ? r.StrongestMethodTier : 'Unknown',
+      methods: (r.MethodsRegistered || '').split(';').map(s => s.trim()).filter(Boolean),
+      mfaReg: tri(r.IsMfaRegistered), sspr: tri(r.IsSsprRegistered), ssprEnabled: tri(r.IsSsprEnabled), pwdless: tri(r.IsPasswordlessCapable),
+      def: r.DefaultMfaMethod || '', sysPref: tri(r.SystemPreferredEnabled), source: r.RegistrationDataSource || '',
+      lastSignIn: date(r.LastSuccessfulSignIn), created: date(r.CreatedDateTime), raw: r,
+    }));
+    const g = rows.find(r => r.ReportGeneratedUtc);
+    META = { source, generated: g ? date(g.ReportGeneratedUtc) : null, signIn: !rows.some(r => /false/i.test(r.SignInActivityAvailable || '')) };
+    methodState = new Map(); focus = null; page = 200;
+    $('drop').classList.add('hidden'); $('dash').classList.remove('hidden');
+    $('subtitle').textContent = `${source} · ${fmtInt.format(USERS.length)} users${META.generated ? ' · report generated ' + fmtD(META.generated) : ''}`;
+    render();
+  }
+
+  // ------------------------------------------------------------ filters ----
+  function baseFilter(u, ignoreMethods) {
+    const en = $('fEnabled').value, ty = $('fType').value, q = $('fSearch').value.trim().toLowerCase();
+    if (en === 'enabled' && !u.enabled) return false;
+    if (en === 'disabled' && u.enabled) return false;
+    if (ty !== 'all' && u.type !== ty) return false;
+    if ($('fAdmin').checked && u.admin !== true) return false;
+    if (q && !`${u.name} ${u.upn} ${u.dept} ${u.title}`.toLowerCase().includes(q)) return false;
+    if (!ignoreMethods) for (const [m, s] of methodState) {
+      const has = u.methods.includes(m);
+      if (s === 'has' && !has) return false;
+      if (s === 'not' && has) return false;
+    }
+    return true;
+  }
+  function focusMatch(u) {
+    if (!focus) return true;
+    if (focus.kind === 'tier') return u.tier === focus.value;
+    if (focus.kind === 'nomfa') return !MFA_TIERS.has(u.tier) && u.tier !== 'Unknown';
+    if (focus.kind === 'adminWeak') return u.admin === true && u.tier !== 'Phishing-resistant';
+    if (focus.kind === 'default') return (u.def || 'none') === focus.value;
+    return true;
+  }
+  function setFocus(f) {
+    const same = focus && f && JSON.stringify(focus) === JSON.stringify(f);
+    focus = same ? null : f; page = 200;
+    render();
+    if (focus) $('usrTitle').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ------------------------------------------------------------ helpers ----
+  const tip = $('tip');
+  function showTip(evt, value, label, hint) {
+    tip.replaceChildren(el('div', 'v', value), el('div', 'k', label)); if (hint) tip.append(el('div', 'h', hint));
+    let x, y;
+    if (evt.type !== 'focus' && evt.clientX != null) { x = evt.clientX; y = evt.clientY; }
+    else { const b = evt.currentTarget.getBoundingClientRect(); x = b.left + b.width / 2; y = b.top; }
+    tip.style.opacity = '1';
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = x + 12, top = y - th - 12;
+    if (left + tw > innerWidth - 8) left = x - tw - 12;
+    if (top < 8) top = y + 16;
+    tip.style.left = Math.max(8, left) + 'px'; tip.style.top = top + 'px';
+  }
+  const hideTip = () => { tip.style.opacity = '0'; };
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function svgEl(tag, attrs, parent) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.append(e); return e; }
+  function clickable(node, fn) { node.setAttribute('tabindex', '0'); node.setAttribute('role', 'button'); node.addEventListener('click', fn); node.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } }); }
+  function tipOn(node, fn) { node.addEventListener('pointermove', fn); node.addEventListener('focus', fn); node.addEventListener('pointerleave', hideTip); node.addEventListener('blur', hideTip); }
+  const truncate = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+  const pct = (n, d) => d ? `${Math.round(n / d * 100)}%` : '–';
+  function hBar(x, y, w, h) { const r = Math.min(4, h / 2, w); return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h - r}Q${x + w},${y + h} ${x + w - r},${y + h}H${x}Z`; }
+  function legend(host, items) { host.replaceChildren(...items.map(it => { const li = el('li'); const s = el('span', 'sw'); s.style.background = it.color; li.append(s, document.createTextNode(it.label)); return li; })); }
+  function tierPill(t) { const p = el('span', 'pill'); const d = el('span', 'dot'); d.style.background = TIER[t].color; p.append(d, document.createTextNode(t)); return p; }
+  function dataTable(host, head, rows) {
+    const t = el('table'); const tr = el('tr'); head.forEach(h => tr.append(el('th', '', h)));
+    const th = el('thead'); th.append(tr); t.append(th); const tb = el('tbody');
+    rows.forEach(r => { const row = el('tr'); r.forEach((v, i) => row.append(el('td', i ? 'num' : '', v))); tb.append(row); });
+    t.append(tb); host.replaceChildren(t);
+  }
+
+  // ------------------------------------------------------- method chips ----
+  function renderMethodChips() {
+    const host = $('methods'); host.replaceChildren(el('span', 'lbl', 'Methods:'));
+    const pool = USERS.filter(u => baseFilter(u, true));
+    const all = new Set(); USERS.forEach(u => u.methods.forEach(m => all.add(m)));
+    const order = [...all].sort((a, b) => TIERS.findIndex(t => t.key === mTier(a)) - TIERS.findIndex(t => t.key === mTier(b)) || mLabel(a).localeCompare(mLabel(b)));
+    order.forEach(m => {
+      const st = methodState.get(m) || '';
+      const b = el('button', 'mchip'); b.type = 'button'; b.dataset.state = st;
+      const sw = el('span', 'sw'); sw.style.background = TIER[mTier(m)].color;
+      b.append(el('span', 'mark', st === 'has' ? '✓' : st === 'not' ? '✕' : ''), sw, document.createTextNode(mLabel(m)), el('span', 'n', fmtInt.format(pool.filter(u => u.methods.includes(m)).length)));
+      b.setAttribute('aria-label', `${mLabel(m)}: ${st === 'has' ? 'showing only users with it' : st === 'not' ? 'hiding users with it' : 'not filtered'}. Click to change.`);
+      b.title = 'Click: only users with this method → users without it → no filter';
+      b.addEventListener('click', () => {
+        const next = st === '' ? 'has' : st === 'has' ? 'not' : '';
+        if (next) methodState.set(m, next); else methodState.delete(m);
+        page = 200; render();
+      });
+      host.append(b);
+    });
+    if (methodState.size) { const c = el('button', 'linkbtn', 'Clear method filters'); c.type = 'button'; c.addEventListener('click', () => { methodState.clear(); render(); }); host.append(c); }
+    else host.append(el('span', 'hint', 'Click a method to show only users with it; click again to hide users with it.'));
+  }
+
+  // --------------------------------------------------------------- tiles ---
+  function renderTiles(us) {
+    const t = $('tiles'); t.replaceChildren();
+    const known = us.filter(u => u.tier !== 'Unknown');
+    const mfa = known.filter(u => MFA_TIERS.has(u.tier)).length;
+    const pr = known.filter(u => u.tier === 'Phishing-resistant').length;
+    const phone = known.filter(u => u.tier === 'Phone (SMS / voice)').length;
+    const none = known.filter(u => u.tier === 'No MFA method').length;
+    const admins = us.filter(u => u.admin === true);
+    const adminWeak = admins.filter(u => u.tier !== 'Phishing-resistant').length;
+    const sspr = known.filter(u => u.sspr === true).length;
+    const unknown = us.length - known.length;
+    const defs = [
+      { hero: true, label: 'Users in view', value: fmtInt.format(us.length), meta: unknown ? `${fmtInt.format(unknown)} with no registration data` : 'all with registration data' },
+      { label: 'MFA registered', value: pct(mfa, known.length), meta: `${fmtInt.format(mfa)} of ${fmtInt.format(known.length)} · SSPR ${pct(sspr, known.length)}`, color: 'var(--t3)' },
+      { label: 'Phishing-resistant', value: pct(pr, known.length), meta: `${fmtInt.format(pr)} users`, color: 'var(--t1)', f: { kind: 'tier', value: 'Phishing-resistant', label: 'Users with a phishing-resistant method' } },
+      { label: 'Phone (SMS / voice) only', value: fmtInt.format(phone), meta: 'weakest MFA', color: 'var(--t4)', f: { kind: 'tier', value: 'Phone (SMS / voice)', label: 'Users whose strongest method is a phone' } },
+      { label: 'No MFA method', value: fmtInt.format(none), meta: 'can\'t complete MFA', color: 'var(--t5)', f: { kind: 'nomfa', value: 1, label: 'Users with no MFA method' } },
+      { label: 'Admins without phishing-resistant', value: fmtInt.format(adminWeak), meta: `of ${fmtInt.format(admins.length)} admins in view`, color: 'var(--critical)', f: { kind: 'adminWeak', value: 1, label: 'Admins without a phishing-resistant method' } },
+    ];
+    defs.forEach(d => {
+      const b = el(d.f ? 'button' : 'div', 'tile' + (d.hero ? ' hero' : ''));
+      if (d.f) { b.type = 'button'; b.setAttribute('aria-pressed', focus && focus.label === d.f.label ? 'true' : 'false'); b.addEventListener('click', () => setFocus(d.f)); }
+      const l = el('span', 'label'); if (d.color) { const s = el('span', 'dot'); s.style.background = d.color; l.append(s); }
+      l.append(document.createTextNode(d.label));
+      b.append(l, el('span', 'value', d.value), el('span', 'meta', d.meta));
+      t.append(b);
+    });
+  }
+
+  // ----------------------------------------------------------- tier bar ----
+  function renderTiers(us) {
+    legend($('lgTier'), TIERS.map(t => ({ label: t.key, color: t.color })));
+    const seg = $('segTier'); seg.replaceChildren();
+    const rows = $('tierRows'); rows.replaceChildren();
+    const total = us.length || 1;
+    TIERS.forEach(t => {
+      const n = us.filter(u => u.tier === t.key).length;
+      const share = n / total * 100;
+      const f = { kind: 'tier', value: t.key, label: `Users: ${t.key}` };
+      if (n) {
+        const d = el('div'); d.style.flex = `${n} 1 0`; d.style.background = t.color; d.style.color = t.ink;
+        if (focus && focus.kind === 'tier' && focus.value !== t.key) d.classList.add('dim');
+        d.setAttribute('aria-label', `${t.key}: ${n} users, ${Math.round(share)}%`);
+        const label = `${Math.round(share)}%`;
+        requestAnimationFrame(() => { if (d.clientWidth >= label.length * 8 + 16) d.textContent = label; });
+        tipOn(d, (e) => showTip(e, `${fmtInt.format(n)} users · ${share.toFixed(1)}%`, t.key, 'click to list'));
+        clickable(d, () => setFocus(f));
+        seg.append(d);
+      }
+      const sw = el('span', 'sw'); sw.style.background = t.color;
+      const name = el('button', '', t.key); name.type = 'button'; name.addEventListener('click', () => setFocus(f));
+      rows.append(sw, name, el('span', 'num', fmtInt.format(n)), el('span', 'pct', `${share.toFixed(1)}%`));
+    });
+  }
+
+  // ----------------------------------------------------- horizontal bars ---
+  function bars(host, tableHost, items, onClick, isFocused, unit) {
+    if (!items.length) { host.replaceChildren(el('p', 'muted', 'Nothing to show.')); tableHost.replaceChildren(); return; }
+    const W = Math.max(280, host.clientWidth), labelW = Math.min(230, W * 0.45), barH = 16, gap = 10;
+    const H = items.length * (barH + gap), plotW = W - labelW - 48, max = Math.max(1, ...items.map(i => i.value));
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': items.map(i => `${i.label} ${i.value}`).join(', ') });
+    svgEl('line', { x1: labelW, x2: labelW, y1: 0, y2: H - gap + 2, stroke: 'var(--axis)' }, svg);
+    const anyF = items.some(isFocused);
+    items.forEach((it, i) => {
+      const y = i * (barH + gap), w = Math.max(2, plotW * it.value / max);
+      const g = svgEl('g', { class: 'hit', 'aria-label': `${it.label}: ${it.value} ${unit}` }, svg);
+      if (anyF && !isFocused(it)) g.setAttribute('opacity', '0.4');
+      svgEl('rect', { x: 0, y: y - gap / 2, width: W, height: barH + gap, fill: 'transparent' }, g);
+      svgEl('text', { x: labelW - 8, y: y + barH / 2 + 4, 'text-anchor': 'end', 'font-size': 12, fill: 'var(--ink-2)' }, g).textContent = truncate(it.label, Math.floor((labelW - 10) / 6.3));
+      svgEl('path', { d: hBar(labelW + 1, y, w, barH), fill: it.color || 'var(--series-1)', class: 'mark' }, g);
+      svgEl('text', { x: labelW + 1 + w + 6, y: y + barH / 2 + 4, 'font-size': 12, 'font-weight': 600, fill: 'var(--ink)' }, g).textContent = fmtInt.format(it.value);
+      tipOn(g, (e) => showTip(e, `${fmtInt.format(it.value)} ${unit}`, it.label + (it.sub ? ` · ${it.sub}` : ''), 'click to filter'));
+      clickable(g, () => onClick(it));
+    });
+    host.replaceChildren(svg);
+    dataTable(tableHost, ['Name', unit], items.map(it => [it.label, fmtInt.format(it.value)]));
+  }
+
+  function renderMethodsChart(us) {
+    legend($('lgMethods'), TIERS.slice(0, 5).map(t => ({ label: t.key === 'No MFA method' ? 'Not usable for MFA' : t.key, color: t.color })));
+    const counts = new Map(); us.forEach(u => u.methods.forEach(m => counts.set(m, (counts.get(m) || 0) + 1)));
+    const items = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([m, n]) => ({ key: m, label: mLabel(m), value: n, color: TIER[mTier(m)].color, sub: mTier(m) }));
+    bars($('chMethods'), $('tbMethods'), items, it => { if (methodState.get(it.key) === 'has') methodState.delete(it.key); else methodState.set(it.key, 'has'); page = 200; render(); },
+      it => methodState.get(it.key) === 'has', 'users');
+  }
+  function renderDefaults(us) {
+    const counts = new Map(); us.filter(u => u.tier !== 'Unknown').forEach(u => { const k = u.def || 'none'; counts.set(k, (counts.get(k) || 0) + 1); });
+    const weak = new Set(['sms', 'voiceMobile', 'voiceAlternateMobile', 'voiceOffice']);
+    const items = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ key: k, label: DEFAULTS[k] || k, value: n, color: weak.has(k) ? 'var(--t4)' : k === 'none' ? 'var(--t6)' : 'var(--t3)' }));
+    bars($('chDefault'), $('tbDefault'), items, it => setFocus({ kind: 'default', value: it.key, label: `Default MFA method: ${it.label}` }),
+      it => focus && focus.kind === 'default' && focus.value === it.key, 'users');
+  }
+
+  // --------------------------------------------------------------- table ---
+  const TIER_ORDER = Object.fromEntries(TIERS.map((t, i) => [t.key, i]));
+  function renderTable(us) {
+    const rows = us.filter(focusMatch);
+    lastRows = rows;
+    $('usrTitle').textContent = focus ? focus.label : 'Users';
+    const mf = [...methodState].map(([m, s]) => `${s === 'has' ? 'with' : 'without'} ${mLabel(m)}`).join(', ');
+    $('usrSub').textContent = `${fmtInt.format(rows.length)} users${mf ? ' · ' + mf : ''}`;
+    const chip = $('focusChip'); chip.replaceChildren();
+    if (focus) { const c = el('span', 'focus-chip'); c.append(el('span', '', focus.label)); const x = el('button', '', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Clear selection'); x.addEventListener('click', () => setFocus(null)); c.append(x); chip.append(c); }
+    const cols = [
+      { key: 'name', label: 'User', get: u => u.name.toLowerCase() },
+      { key: 'type', label: 'Type', get: u => u.type },
+      { key: 'enabled', label: 'Account', get: u => u.enabled ? 0 : 1 },
+      { key: 'admin', label: 'Admin', get: u => u.admin === true ? 0 : 1 },
+      { key: 'tier', label: 'Strongest method', get: u => TIER_ORDER[u.tier] },
+      { key: 'methods', label: 'Methods registered', get: u => -u.methods.length },
+      { key: 'def', label: 'Default MFA', get: u => u.def },
+      { key: 'sspr', label: 'SSPR', get: u => u.sspr === true ? 0 : 1 },
+      { key: 'last', label: 'Last sign-in', get: u => u.lastSignIn ? -u.lastSignIn : 0 },
+    ];
+    const head = $('usrHead'); head.replaceChildren();
+    cols.forEach(c => {
+      const th = el('th', 'sortable', c.label); th.scope = 'col'; th.tabIndex = 0;
+      th.setAttribute('aria-sort', sort.key === c.key ? (sort.dir > 0 ? 'ascending' : 'descending') : 'none');
+      if (sort.key === c.key) th.append(el('span', 'arrow', sort.dir > 0 ? '▲' : '▼'));
+      const act = () => { if (sort.key === c.key) sort.dir = -sort.dir; else sort = { key: c.key, dir: 1 }; renderTable(us); };
+      th.addEventListener('click', act); th.addEventListener('keydown', e => { if (e.key === 'Enter') act(); });
+      head.append(th);
+    });
+    const col = cols.find(c => c.key === sort.key);
+    const sorted = [...rows].sort((a, b) => { const x = col.get(a), y = col.get(b); return (x < y ? -1 : x > y ? 1 : 0) * sort.dir || a.name.localeCompare(b.name); });
+    const body = $('usrBody'); body.replaceChildren();
+    const frag = document.createDocumentFragment();
+    sorted.slice(0, page).forEach(u => {
+      const tr = el('tr');
+      const n = el('td', 'name'); n.append(el('div', '', u.name), el('div', 'upn', u.upn)); if (u.dept || u.title) n.append(el('div', 'upn', [u.title, u.dept].filter(Boolean).join(' · '))); tr.append(n);
+      tr.append(el('td', '', u.type === 'guest' ? 'Guest' : u.type === 'member' ? 'Member' : u.type));
+      tr.append(el('td', u.enabled ? '' : 'warn', u.enabled ? 'Enabled' : 'Disabled'));
+      tr.append(el('td', u.admin === true && u.tier !== 'Phishing-resistant' ? 'warn' : '', u.admin === true ? 'Admin' : u.admin === false ? '–' : ''));
+      const t = el('td'); t.append(tierPill(u.tier)); if (u.tier === 'Unknown' && u.source) t.append(el('div', 'muted', u.source.replace(/^Not available /, ''))); tr.append(t);
+      const m = el('td', 'methods');
+      if (u.methods.length) u.methods.forEach(x => { const c = el('span', 'chip'); const s = el('span', 'sw'); s.style.cssText = `width:8px;height:8px;background:${TIER[mTier(x)].color}`; c.append(s, document.createTextNode(mLabel(x))); m.append(c); });
+      else m.append(el('span', 'muted', '—'));
+      tr.append(m);
+      tr.append(el('td', ['sms', 'voiceMobile', 'voiceAlternateMobile', 'voiceOffice'].includes(u.def) ? 'warn' : '', DEFAULTS[u.def] || u.def || '—'));
+      tr.append(el('td', '', u.sspr === true ? 'Registered' : u.sspr === false ? 'No' : ''));
+      tr.append(el('td', 'nowrap' + (u.lastSignIn ? '' : ' muted'), u.lastSignIn ? fmtD(u.lastSignIn) : (META.signIn ? 'Never / unknown' : 'n/a')));
+      frag.append(tr);
+    });
+    body.append(frag);
+    if (!sorted.length) { const tr = el('tr'); const td = el('td', 'muted', 'No users match.'); td.colSpan = cols.length; tr.append(td); body.append(tr); }
+    const more = $('usrMore'); more.replaceChildren();
+    if (sorted.length > page) { more.append(el('span', '', `Showing ${fmtInt.format(page)} of ${fmtInt.format(sorted.length)}`)); const b = el('button', '', 'Show more'); b.type = 'button'; b.addEventListener('click', () => { page += 500; renderTable(us); }); more.append(b); }
+  }
+
+  function renderBanners() {
+    const b = $('banners'); b.replaceChildren();
+    const add = (m) => { const d = el('div', 'banner'); d.append(el('span', 'ico', '!'), el('div', '', m)); b.append(d); };
+    const disabledUnknown = USERS.filter(u => !u.enabled && u.tier === 'Unknown').length;
+    if ($('fEnabled').value !== 'enabled' && disabledUnknown) add(`${fmtInt.format(disabledUnknown)} disabled user(s) have no method data: Microsoft's registration report doesn't cover disabled accounts. Run the script with -IncludeDisabledUserMethods to read them directly.`);
+    if (!META.signIn) add('Sign-in activity wasn\'t available when the report was generated (it needs Entra ID P1/P2), so last sign-in dates are missing.');
+  }
+
+  function render() {
+    if (!USERS.length) return;
+    hideTip();
+    const us = USERS.filter(u => baseFilter(u, false));
+    renderBanners(); renderMethodChips(); renderTiles(us); renderTiers(us); renderDefaults(us); renderMethodsChart(us); renderTable(us);
+  }
+
+  function exportRows() {
+    if (!lastRows.length) return;
+    const cols = Object.keys(lastRows[0].raw);
+    const esc = (v) => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    const lines = [cols.join(',')]; lastRows.forEach(u => lines.push(cols.map(c => esc(String(u.raw[c] ?? ''))).join(',')));
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'auth-methods-filtered.csv'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ------------------------------------------------------------- sample ----
+  function sampleCsv() {
+    let seed = 5; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const pick = (a) => a[Math.floor(rnd() * a.length)];
+    const now = Date.UTC(2026, 10, 9, 6, 0, 0);
+    const iso = (t) => t ? new Date(t).toISOString().slice(0, 19) + 'Z' : '';
+    const first = ['Alex', 'Sam', 'Jordan', 'Priya', 'Chris', 'Taylor', 'Robin', 'Jamie', 'Casey', 'Morgan', 'Riley', 'Drew', 'Avery', 'Quinn', 'Hana', 'Omar', 'Lena', 'Mateo', 'Zara', 'Kofi'];
+    const last = ['Morgan', 'Patel', 'Lee', 'Nolan', 'Shah', 'Brooks', 'Chen', 'Fox', 'Wong', 'Evans', 'Diaz', 'Kim', 'Osei', 'Larsen', 'Reid', 'Silva', 'Novak', 'Haddad'];
+    const depts = ['Finance', 'Sales', 'IT', 'HR', 'Operations', 'Marketing', 'Legal', 'Engineering'];
+    const profiles = [
+      [0.10, ['windowsHelloForBusiness', 'microsoftAuthenticatorPush', 'softwareOneTimePasscode'], 'push'],
+      [0.05, ['fido2SecurityKey', 'microsoftAuthenticatorPush'], 'push'],
+      [0.06, ['passKeyDeviceBoundAuthenticator', 'microsoftAuthenticatorPush'], 'push'],
+      [0.08, ['microsoftAuthenticatorPasswordless', 'microsoftAuthenticatorPush', 'softwareOneTimePasscode'], 'push'],
+      [0.33, ['microsoftAuthenticatorPush', 'softwareOneTimePasscode', 'mobilePhone'], 'push'],
+      [0.06, ['microsoftAuthenticatorPush', 'mobilePhone', 'email'], 'sms'],
+      [0.03, ['hardwareOneTimePasscode'], 'oath'],
+      [0.14, ['mobilePhone', 'email'], 'sms'],
+      [0.03, ['mobilePhone', 'officePhone'], 'voiceMobile'],
+      [0.06, ['email'], ''],
+      [0.06, [], ''],
+    ];
+    const pickProfile = () => { let r = rnd(), acc = 0; for (const p of profiles) { acc += p[0]; if (r < acc) return p; } return profiles[profiles.length - 1]; };
+    const head = ['UserId', 'UserPrincipalName', 'DisplayName', 'UserType', 'AccountEnabled', 'IsAdmin', 'Department', 'JobTitle', 'OnPremisesSynced', 'CreatedDateTime', 'LastSuccessfulSignIn', 'StrongestMethodTier', 'MethodsRegistered', 'MethodCount', 'IsMfaRegistered', 'IsMfaCapable', 'IsPasswordlessCapable', 'IsSsprRegistered', 'IsSsprEnabled', 'IsSsprCapable', 'DefaultMfaMethod', 'SystemPreferredEnabled', 'SystemPreferredMethods', 'RegistrationDataSource', 'RegistrationLastUpdated', 'SignInActivityAvailable', 'ReportGeneratedUtc'];
+    const rows = [];
+    const tierOf = (ms) => { for (const t of TIERS.slice(0, 4)) if (ms.some(m => mTier(m) === t.key)) return t.key; return 'No MFA method'; };
+    for (let i = 0; i < 640; i++) {
+      const guest = rnd() < 0.12, enabled = rnd() > 0.07, admin = !guest && rnd() < 0.04;
+      const fn = pick(first), ln = pick(last);
+      const upn = guest ? `${fn.toLowerCase()}.${ln.toLowerCase()}_partner.com#EXT#@contoso.onmicrosoft.com` : `${fn.toLowerCase()}.${ln.toLowerCase()}${i}@contoso.com`;
+      let [, methods, def] = pickProfile();
+      if (admin && rnd() < 0.55) { methods = ['fido2SecurityKey', 'microsoftAuthenticatorPush']; def = 'push'; }
+      if (guest) { methods = rnd() < 0.5 ? ['email'] : ['microsoftAuthenticatorPush']; def = methods[0] === 'email' ? '' : 'push'; }
+      const fromReport = enabled || rnd() < 0.2;
+      const tier = fromReport ? tierOf(methods) : 'Unknown';
+      const mfa = ['Phishing-resistant', 'Passwordless', 'App-based MFA', 'Phone (SMS / voice)'].includes(tier);
+      const sspr = methods.length >= 2 || methods.includes('mobilePhone');
+      const created = now - (30 + rnd() * 1500) * 86400000;
+      const lastSignIn = enabled ? now - Math.pow(rnd(), 3) * 200 * 86400000 : (rnd() < 0.5 ? now - (90 + rnd() * 400) * 86400000 : null);
+      const b = (v) => fromReport ? (v ? 'True' : 'False') : '';
+      rows.push([`u-${i}`, upn, `${fn} ${ln}`, guest ? 'Guest' : 'Member', enabled ? 'True' : 'False', b(admin), guest ? '' : pick(depts), '', guest ? 'False' : 'True', iso(created), iso(lastSignIn),
+        tier, fromReport ? methods.join('; ') : '', fromReport ? methods.length : 0, b(mfa), b(mfa), b(['Phishing-resistant', 'Passwordless'].includes(tier)), b(sspr), b(!guest), b(sspr && !guest),
+        fromReport ? def : '', b(true), fromReport && def ? def : '', fromReport ? 'Registration report' : 'Not available (disabled account)', fromReport ? iso(now - 86400000) : '', 'True', iso(now)]);
+    }
+    const esc = (v) => { v = String(v); return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+    return [head, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+  }
+
+  // ------------------------------------------------------------- wiring ----
+  function readFile(f) { if (!f) return; const rd = new FileReader(); rd.onload = () => load(String(rd.result), f.name); rd.readAsText(f); }
+  $('btnLoad').addEventListener('click', () => $('file').click());
+  $('file').addEventListener('change', e => { readFile(e.target.files[0]); e.target.value = ''; });
+  $('btnSample').addEventListener('click', () => load(sampleCsv(), 'Sample data'));
+  $('btnExport').addEventListener('click', exportRows);
+  ['fEnabled', 'fType', 'fAdmin'].forEach(id => $(id).addEventListener('change', () => { page = 200; render(); }));
+  let st; $('fSearch').addEventListener('input', () => { clearTimeout(st); st = setTimeout(() => { page = 200; render(); }, 150); });
+  ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement) $('drop').classList.remove('over'); }));
+  document.addEventListener('drop', e => readFile(e.dataTransfer.files[0]));
+  let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (USERS.length) render(); }, 150); });
+
+  // Hosted mode: the reporting portal opens this page with ?src=/api/... to load a stored report.
+  // Only same-origin /api/ paths are accepted.
+  (() => {
+    const qs = new URLSearchParams(location.search);
+    const src = qs.get('src');
+    if (!src || !/^\/api\/[\w\-\/.]+$/.test(src)) return;
+    const msg = document.querySelector('#drop strong');
+    if (msg) msg.textContent = 'Loading report…';
+    fetch(src, { credentials: 'same-origin', cache: 'no-store' })
+      .then(async r => {
+        if (r.ok) return r.text();
+        let detail = `${r.status} ${r.statusText}`;
+        try { const j = await r.json(); if (j && j.error) detail = j.error; } catch (_) { /* not JSON */ }
+        throw new Error(detail);
+      })
+      .then(text => load(text, qs.get('label') || 'Latest report'))
+      .catch(e => { if (msg) msg.textContent = e.message; });
+  })();
+})();
+</script>
+</body>
+</html>

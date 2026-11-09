@@ -115,7 +115,8 @@ run "schedules_reach_app_settings" {
   }
   assert {
     condition = (azurerm_function_app_flex_consumption.reports.app_settings["SCHEDULE_LEAST_PRIVILEGE"] == "0 15 1 * * *" &&
-    azurerm_function_app_flex_consumption.reports.app_settings["SCHEDULE_AZURE_CHANGES"] == "0 30 2 * * *")
+      azurerm_function_app_flex_consumption.reports.app_settings["SCHEDULE_AZURE_CHANGES"] == "0 30 2 * * *" &&
+    azurerm_function_app_flex_consumption.reports.app_settings["SCHEDULE_AUTH_METHODS"] == "0 0 3 * * *")
     error_message = "Schedule overrides and defaults should both reach the app settings."
   }
 }

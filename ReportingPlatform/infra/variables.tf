@@ -131,6 +131,7 @@ variable "report_schedules" {
     azure_changes      = optional(string, "0 30 2 * * *") # daily 02:30
     app_signins        = optional(string, "0 0 4 * * 1")  # Mondays 04:00
     conditional_access = optional(string, "0 30 4 * * 1") # Mondays 04:30
+    auth_methods       = optional(string, "0 0 3 * * *")  # daily 03:00
   })
   default = {}
 }
