@@ -355,6 +355,7 @@
     META = {
       source, generated: any ? date(any.ReportGeneratedUtc) : null, start: any ? date(any.PeriodStartUtc) : null,
       pim: !rows.some(r => /false/i.test(r.PimDataAvailable || '')),
+      history: !rows.some(r => /false/i.test(r.PimHistoryAvailable || '')),
     };
     buildUsers();
     focus = null; expanded.clear();
@@ -787,7 +788,8 @@
   function renderBanners() {
     const b = $('banners'); b.replaceChildren();
     const add = (msg) => { const d = el('div', 'banner'); d.append(el('span', 'ico', '!'), el('div', '', msg)); b.append(d); };
-    if (!META.pim) add('PIM history wasn\'t available when this report was generated, so current role assignments were treated as active for the whole period. PIM activations aren\'t shown.');
+    if (!META.pim) add('PIM data wasn\'t available when this report was generated, so current role assignments were treated as active for the whole period. PIM activations aren\'t shown.');
+    else if (!META.history) add('PIM activation history couldn\'t be read (it needs RoleAssignmentSchedule.ReadWrite.Directory), so past activations were rebuilt from the audit log. Where an activation\'s end time wasn\'t recorded, 8 hours is assumed. Re-run the script with -IncludeActivationHistoryPermission for exact history.');
   }
 
   function setFocus(f) {

@@ -82,9 +82,25 @@ expanded, and device/app filters aren't evaluated.
 ```
 
 Options: `-Days` (default 30), `-UserPrincipalName` to limit to specific admins, `-MapPath` for a
-custom activity map. Needs `AuditLog.Read.All`, `RoleManagement.Read.Directory` and
-`Directory.Read.All`, plus a role that can read audit logs and role assignments (e.g. Global
-Reader). Audit logs are kept for 30 days (7 on free tenants); PIM history needs P2 / ID Governance.
+custom activity map, `-IncludeActivationHistoryPermission` (see below).
+
+Permissions:
+
+| What | Graph permission | Signed-in user's Entra role (delegated) |
+|---|---|---|
+| Audit log, users, groups, role definitions | `AuditLog.Read.All`, `Directory.Read.All` | Global Reader (or Reports Reader + Directory Readers) |
+| Active and eligible role assignments (PIM) | `RoleManagement.Read.Directory` | Global Reader, Security Reader, Security Operator, Security Administrator or Privileged Role Administrator |
+| PIM activation history | `RoleAssignmentSchedule.ReadWrite.Directory` or `RoleManagement.ReadWrite.Directory` | as above |
+
+Microsoft Graph has **no read-only permission for PIM activation history**
+(`roleAssignmentScheduleRequests`), which is the usual cause of a 403. The script only reads; run it
+with `-IncludeActivationHistoryPermission` to request the permission (an admin may need to consent).
+Without it, past activations are rebuilt from the audit log instead ("Add member to role completed
+(PIM activation)" events), which is close but less exact. **Global Reader** is the simplest role to
+run the report with. PIM needs Entra ID P2 or ID Governance; audit logs are kept for 30 days.
+
+If you're already connected to Graph (e.g. from another report), the script checks the session's
+scopes and reconnects if any are missing.
 
 How it works:
 

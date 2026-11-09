@@ -170,9 +170,20 @@ if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
 }
 Import-Module Microsoft.Graph.Authentication
 
+$requiredScopes = @('Policy.Read.All', 'Directory.Read.All', 'Application.Read.All')
 $context = Get-MgContext
-if (-not $context -or ($TenantId -and $context.TenantId -ne $TenantId)) {
-    $connectParams = @{ Scopes = @('Policy.Read.All', 'Directory.Read.All', 'Application.Read.All'); NoWelcome = $true }
+$needConnect = -not $context -or ($TenantId -and $context.TenantId -ne $TenantId)
+if (-not $needConnect -and $context.PSObject.Properties['AuthType'] -and "$($context.AuthType)" -eq 'Delegated') {
+    # An existing session (e.g. from another report) may not have the scopes this one needs
+    $have = @($context.Scopes | Where-Object { $_ })
+    $missing = @($requiredScopes | Where-Object { $_ -notin $have -and ($_ -replace '\.Read\.', '.ReadWrite.') -notin $have })
+    if ($missing.Count) {
+        Write-Host "Current Graph session is missing $($missing -join ', '); reconnecting." -ForegroundColor Yellow
+        $needConnect = $true
+    }
+}
+if ($needConnect) {
+    $connectParams = @{ Scopes = $requiredScopes; NoWelcome = $true }
     if ($TenantId) { $connectParams.TenantId = $TenantId }
     Connect-MgGraph @connectParams
     $context = Get-MgContext

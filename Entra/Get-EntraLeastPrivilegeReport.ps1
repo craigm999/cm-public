@@ -37,13 +37,19 @@
 
     REQUIREMENTS
       * Microsoft.Graph.Authentication module
-      * Permissions: AuditLog.Read.All, RoleManagement.Read.Directory, Directory.Read.All
-        (RoleAssignmentSchedule.Read.Directory / RoleEligibilitySchedule.Read.Directory
-        are covered by RoleManagement.Read.Directory)
-      * A role that can read audit logs and role assignments, e.g. Global Reader or
-        Security Reader.
-      * Entra ID P1/P2: audit logs are kept for 30 days (7 days on free tenants), so
-        -Days above 30 returns no extra data. PIM history needs P2 / ID Governance.
+      * Graph permissions (delegated or application):
+          AuditLog.Read.All, Directory.Read.All, RoleManagement.Read.Directory
+        and, for PIM activation history (roleAssignmentScheduleRequests), one of
+          RoleAssignmentSchedule.ReadWrite.Directory or RoleManagement.ReadWrite.Directory
+        Microsoft Graph offers no read-only permission for PIM request history; the script
+        only reads. Add -IncludeActivationHistoryPermission to request it. Without it, past
+        activations are rebuilt from the audit log instead.
+      * When signed in as a user (delegated), the user also needs one of these Entra roles
+        for the PIM APIs: Global Reader, Security Reader, Security Operator, Security
+        Administrator or Privileged Role Administrator. Global Reader also covers the
+        audit log and directory reads.
+      * Entra ID P2 or ID Governance for PIM. Audit logs are kept for 30 days (7 days on
+        free tenants), so -Days above 30 returns no extra data.
 
 .PARAMETER TenantId
     Tenant ID or domain to connect to. Optional when already connected.
@@ -53,6 +59,11 @@
 
 .PARAMETER UserPrincipalName
     Only analyse these admins (UPNs). Default: everyone who held a role in the period.
+
+.PARAMETER IncludeActivationHistoryPermission
+    Also request RoleAssignmentSchedule.ReadWrite.Directory when connecting, which Microsoft
+    Graph requires to read PIM activation history. The script never writes; this is only
+    needed because Graph has no read-only permission for that API.
 
 .PARAMETER MapPath
     Activity-to-permission map. Default: LeastPrivilegeActivityMap.csv next to this script.
@@ -71,6 +82,7 @@ param(
     [string]$TenantId,
     [ValidateRange(1, 365)][int]$Days = 30,
     [string[]]$UserPrincipalName,
+    [switch]$IncludeActivationHistoryPermission,
     [string]$MapPath = (Join-Path $PSScriptRoot 'LeastPrivilegeActivityMap.csv'),
     [string]$OutputPath
 )
@@ -164,11 +176,24 @@ if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
     throw "Microsoft.Graph.Authentication module not found. Install it with: Install-Module Microsoft.Graph.Authentication -Scope CurrentUser"
 }
 Import-Module Microsoft.Graph.Authentication
+$requiredScopes = @('AuditLog.Read.All', 'Directory.Read.All', 'RoleManagement.Read.Directory')
+if ($IncludeActivationHistoryPermission) { $requiredScopes += 'RoleAssignmentSchedule.ReadWrite.Directory' }
 $context = Get-MgContext
-if (-not $context -or ($TenantId -and $context.TenantId -ne $TenantId)) {
-    $connectParams = @{ Scopes = @('AuditLog.Read.All', 'RoleManagement.Read.Directory', 'Directory.Read.All'); NoWelcome = $true }
+$needConnect = -not $context -or ($TenantId -and $context.TenantId -ne $TenantId)
+if (-not $needConnect -and $context.PSObject.Properties['AuthType'] -and "$($context.AuthType)" -eq 'Delegated') {
+    # An existing session (e.g. from another report) may not have the scopes this one needs
+    $have = @($context.Scopes | Where-Object { $_ })
+    $missing = @($requiredScopes | Where-Object { $_ -notin $have -and ($_ -replace '\.Read\.', '.ReadWrite.') -notin $have })
+    if ($missing.Count) {
+        Write-Host "Current Graph session is missing $($missing -join ', '); reconnecting." -ForegroundColor Yellow
+        $needConnect = $true
+    }
+}
+if ($needConnect) {
+    $connectParams = @{ Scopes = $requiredScopes; NoWelcome = $true }
     if ($TenantId) { $connectParams.TenantId = $TenantId }
     Connect-MgGraph @connectParams
+    $context = Get-MgContext
 }
 
 $now = [datetime]::UtcNow
@@ -247,7 +272,29 @@ function Add-RawWindow($PrincipalId, $RoleId, $Scope, $Start, $End, $Source) {
     $rawWindows.Add([pscustomobject]@{ PrincipalId = $PrincipalId; RoleId = $RoleId; Scope = $(if ($Scope) { $Scope } else { '/' }); Start = $Start; End = $End; Source = $Source })
 }
 
-$pimAvailable = $true
+function Get-PimErrorHint {
+    param($ErrorRecord, [string]$Api)
+    $msg = $ErrorRecord.Exception.Message
+    $code = try { [int]$ErrorRecord.Exception.Response.StatusCode } catch { 0 }
+    if (-not $code -and $msg -match '\b(40[0-9])\b') { $code = [int]$Matches[1] }
+    if (-not $code -and $msg -match 'Forbidden') { $code = 403 }
+    if (-not $code -and $msg -match 'BadRequest|Bad Request') { $code = 400 }
+    $hint = switch ($code) {
+        403 {
+            if ($Api -eq 'history') {
+                'Reading PIM activation history needs RoleAssignmentSchedule.ReadWrite.Directory or RoleManagement.ReadWrite.Directory (Microsoft Graph has no read-only permission for it). Re-run with -IncludeActivationHistoryPermission, or for app-only auth grant one of those application permissions.'
+            } else {
+                'Needs RoleManagement.Read.Directory, and when signed in as a user one of: Global Reader, Security Reader, Security Operator, Security Administrator or Privileged Role Administrator.'
+            }
+        }
+        400 { 'The tenant may not be licensed for PIM (Entra ID P2 or ID Governance).' }
+        default { '' }
+    }
+    return "$msg $hint".Trim()
+}
+
+$pimAvailable = $true      # current assignment / activation instances read OK
+$historyAvailable = $true  # PIM request history read OK
 try {
     foreach ($i in Invoke-GraphPaged -Uri 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignmentScheduleInstances') {
         $start = ConvertTo-UtcDate (Get-Prop $i 'startDateTime')
@@ -255,6 +302,18 @@ try {
         $src = if ((Get-Prop $i 'assignmentType') -eq 'Activated') { 'PIM activation' } elseif ($end) { 'Time-bound assignment' } else { 'Permanent assignment' }
         Add-RawWindow $i['principalId'] $i['roleDefinitionId'] (Get-Prop $i 'directoryScopeId') $start $end $src
     }
+}
+catch {
+    $pimAvailable = $false
+    Write-Warning "Could not read active role assignments from PIM: $(Get-PimErrorHint $_ 'instances')"
+    Write-Warning 'Falling back to current role assignments, treated as active for the whole period.'
+    $rawWindows.Clear()
+    foreach ($a in Invoke-GraphPaged -Uri 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments') {
+        Add-RawWindow $a['principalId'] $a['roleDefinitionId'] (Get-Prop $a 'directoryScopeId') $null $null 'Assignment'
+    }
+}
+
+try {
     $requests = @(Invoke-GraphPaged -Uri 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignmentScheduleRequests')
     $deactivations = @($requests | Where-Object { $_['action'] -eq 'selfDeactivate' })
     foreach ($r in $requests) {
@@ -281,18 +340,21 @@ try {
             Add-RawWindow $r['principalId'] $r['roleDefinitionId'] (Get-Prop $r 'directoryScopeId') $start $created 'Assignment (since removed)'
         }
     }
+}
+catch {
+    $historyAvailable = $false
+    Write-Warning "Could not read PIM activation history: $(Get-PimErrorHint $_ 'history')"
+    Write-Warning 'Past activations will be rebuilt from the audit log instead.'
+}
+
+try {
     foreach ($e in Invoke-GraphPaged -Uri 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilityScheduleInstances') {
         $eligible.Add([pscustomobject]@{ PrincipalId = $e['principalId']; RoleId = $e['roleDefinitionId']; Scope = (Get-Prop $e 'directoryScopeId')
             Start = (ConvertTo-UtcDate (Get-Prop $e 'startDateTime')); End = (ConvertTo-UtcDate (Get-Prop $e 'endDateTime')) })
     }
 }
 catch {
-    $pimAvailable = $false
-    Write-Warning "PIM schedule APIs unavailable ($($_.Exception.Message)). Falling back to current role assignments only, treated as active for the whole period."
-    $rawWindows.Clear()
-    foreach ($a in Invoke-GraphPaged -Uri 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments') {
-        Add-RawWindow $a['principalId'] $a['roleDefinitionId'] (Get-Prop $a 'directoryScopeId') $null $null 'Assignment'
-    }
+    Write-Warning "Could not read PIM eligible assignments: $(Get-PimErrorHint $_ 'eligibility')"
 }
 
 # Resolve principals; expand groups to their (current) members
@@ -327,6 +389,71 @@ foreach ($w in $rawWindows) {
     }
 }
 
+# Everyone to analyse: anyone with an active role window, plus anyone eligible for a role
+# (their activations may only be visible in history / the audit log)
+$candidateIds = [System.Collections.Generic.HashSet[string]]::new()
+foreach ($w in $windows) { [void]$candidateIds.Add($w.UserId) }
+foreach ($e in $eligible) {
+    $p = $principals[[string]$e.PrincipalId]
+    if (-not $p) { continue }
+    if ((Get-Prop $p '@odata.type') -eq '#microsoft.graph.user') {
+        $users[$p['id']] = @{ Upn = $p['userPrincipalName']; Name = $p['displayName'] }
+        [void]$candidateIds.Add($p['id'])
+    } elseif ((Get-Prop $p '@odata.type') -eq '#microsoft.graph.group') {
+        if (-not $groupMembers.ContainsKey($p['id'])) {
+            $groupMembers[$p['id']] = @(Invoke-GraphPaged -Uri "https://graph.microsoft.com/v1.0/groups/$($p['id'])/transitiveMembers/microsoft.graph.user?`$select=id,userPrincipalName,displayName")
+        }
+        foreach ($m in $groupMembers[$p['id']]) { $users[$m['id']] = @{ Upn = $m['userPrincipalName']; Name = $m['displayName'] }; [void]$candidateIds.Add($m['id']) }
+    }
+}
+$candidates = @($candidateIds | Where-Object { -not $UserPrincipalName -or $users[$_].Upn -in $UserPrincipalName })
+
+# Read each candidate's audit log once
+$auditsByUser = @{}
+$n = 0
+foreach ($uid in $candidates) {
+    $n++
+    Write-Progress -Activity 'Reading audit logs' -Status "$n of $($candidates.Count): $($users[$uid].Upn)" -PercentComplete ($n / [math]::Max(1, $candidates.Count) * 100)
+    $uri = "https://graph.microsoft.com/v1.0/auditLogs/directoryAudits?`$filter=initiatedBy/user/id eq '$uid' and activityDateTime ge $(Format-Date $periodStart)&`$top=500"
+    $auditsByUser[$uid] = @(Invoke-GraphPaged -Uri $uri)
+}
+Write-Progress -Activity 'Reading audit logs' -Completed
+
+if (-not $historyAvailable) {
+    # Rebuild PIM activations from the audit log: "Add member to role completed (PIM activation)",
+    # ended early by "... (PIM deactivate)". Uses StartTime / ExpirationTime from the event's
+    # additional details where present, otherwise assumes 8 hours (Entra's default maximum).
+    $rolesByName = @{}; foreach ($r in $roleList) { $rolesByName[$r.Name] = $r }
+    $rebuilt = 0
+    foreach ($uid in $candidates) {
+        $ev = @($auditsByUser[$uid] | Sort-Object { ConvertTo-UtcDate (Get-Prop $_ 'activityDateTime') })
+        foreach ($a in $ev) {
+            $act = [string](Get-Prop $a 'activityDisplayName')
+            if ($act -notlike '*PIM activation*' -or $act -like '*expired*' -or $act -like '*requested*' -or (Get-Prop $a 'result') -eq 'failure') { continue }
+            $roleTarget = @(Get-Prop $a 'targetResources') | Where-Object { (Get-Prop $_ 'type') -eq 'Role' } | Select-Object -First 1
+            if (-not $roleTarget) { continue }
+            $role = $roles[[string](Get-Prop $roleTarget 'id')]
+            if (-not $role) { $role = $rolesByName[[string](Get-Prop $roleTarget 'displayName')] }
+            if (-not $role) { continue }
+            $details = @{}
+            foreach ($kv in @(Get-Prop $a 'additionalDetails')) { if ($kv) { $details[[string](Get-Prop $kv 'key')] = Get-Prop $kv 'value' } }
+            $start = ConvertTo-UtcDate $details['StartTime']; if (-not $start) { $start = ConvertTo-UtcDate (Get-Prop $a 'activityDateTime') }
+            $end = ConvertTo-UtcDate $details['ExpirationTime']
+            $src = 'PIM activation (from audit log)'
+            if (-not $end) { $end = $start.AddHours(8); $src = 'PIM activation (from audit log, end assumed 8h)' }
+            $deact = $ev | Where-Object {
+                $d = ConvertTo-UtcDate (Get-Prop $_ 'activityDateTime')
+                (Get-Prop $_ 'activityDisplayName') -like '*PIM deactivat*' -and $d -gt $start -and $d -lt $end -and
+                (@(Get-Prop $_ 'targetResources') | Where-Object { (Get-Prop $_ 'type') -eq 'Role' -and ((Get-Prop $_ 'id') -eq $role.Id -or (Get-Prop $_ 'displayName') -eq $role.Name) })
+            } | Select-Object -First 1
+            if ($deact) { $end = ConvertTo-UtcDate (Get-Prop $deact 'activityDateTime') }
+            $windows.Add([pscustomobject]@{ UserId = $uid; RoleId = $role.Id; Scope = '/'; Start = $start; End = $end; Source = $src })
+            $rebuilt++
+        }
+    }
+    Write-Host "  Rebuilt $rebuilt PIM activation(s) from the audit log."
+}
+
 # Merge overlapping windows for the same user, role, scope and kind of source
 $merged = [System.Collections.Generic.List[object]]::new()
 foreach ($g in ($windows | Group-Object UserId, RoleId, Scope, Source)) {
@@ -345,10 +472,7 @@ foreach ($g in ($windows | Group-Object UserId, RoleId, Scope, Source)) {
 # Keep windows that overlap the period
 $windows = @($merged | Where-Object { (-not $_.End -or $_.End -gt $periodStart) -and (-not $_.Start -or $_.Start -lt $now) })
 
-if ($UserPrincipalName) {
-    $keep = @($users.Keys | Where-Object { $users[$_].Upn -in $UserPrincipalName })
-    $windows = @($windows | Where-Object { $_.UserId -in $keep })
-}
+$windows = @($windows | Where-Object { $_.UserId -in $candidates })
 $adminIds = @(Get-Values $windows 'UserId' | Sort-Object -Unique)
 Write-Host "  $($adminIds.Count) users held a directory role during the last $Days days ($($windows.Count) role periods)."
 
@@ -394,13 +518,9 @@ $reportTime = Format-Date $now
 $actionRecords = [System.Collections.Generic.List[object]]::new()
 $unmatchedPerms = @{}
 
-$n = 0
 foreach ($uid in $adminIds) {
-    $n++
     $u = $users[$uid]
-    Write-Progress -Activity 'Reading audit logs' -Status "$n of $($adminIds.Count): $($u.Upn)" -PercentComplete ($n / [math]::Max(1, $adminIds.Count) * 100)
-    $uri = "https://graph.microsoft.com/v1.0/auditLogs/directoryAudits?`$filter=initiatedBy/user/id eq '$uid' and activityDateTime ge $(Format-Date $periodStart)&`$top=500"
-    $audits = @(Invoke-GraphPaged -Uri $uri)
+    $audits = @($auditsByUser[$uid])
     $userWindows = @($windows | Where-Object { $_.UserId -eq $uid })
 
     foreach ($a in $audits) {
@@ -504,12 +624,11 @@ foreach ($uid in $adminIds) {
             CandidateRoles = (($candidates | Select-Object -First 12 | ForEach-Object { "$($_.Name)|$($_.Score)" }) -join '; ')
             RoleName = ''; RoleId = ''; RoleIsPrivileged = ''; AssignmentSource = ''; Scope = ''; WindowStart = ''; WindowEnd = ''
             ActionsInWindow = ''; ActionsCoveredByRole = ''; WindowVerdict = ''; SuggestedRoles = ''
-            RoleIsBuiltIn = ''; PrivilegeScore = ''; PimDataAvailable = $pimAvailable
+            RoleIsBuiltIn = ''; PrivilegeScore = ''; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable
             PeriodStartUtc = Format-Date $periodStart; ReportGeneratedUtc = $reportTime
         })
     }
 }
-Write-Progress -Activity 'Reading audit logs' -Completed
 Write-Host "  $($actionRecords.Count) audited actions by admins."
 
 #endregion
@@ -537,7 +656,7 @@ foreach ($w in $windows) {
         RoleName = $role.Name; RoleId = $role.Id; RoleIsPrivileged = $role.IsPrivileged; AssignmentSource = $w.Source; Scope = $w.Scope
         WindowStart = Format-Date $w.Start; WindowEnd = Format-Date $w.End
         ActionsInWindow = $inWindow.Count; ActionsCoveredByRole = $byRole.Count; WindowVerdict = $verdict; SuggestedRoles = $suggest -join '; '
-        RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable
+        RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable
         PeriodStartUtc = Format-Date $periodStart; ReportGeneratedUtc = $reportTime
     })
 }
@@ -555,7 +674,7 @@ foreach ($e in $eligible) {
         RoleName = $role.Name; RoleId = $role.Id; RoleIsPrivileged = $role.IsPrivileged; AssignmentSource = 'Eligible (PIM)'; Scope = $e.Scope
         WindowStart = Format-Date $e.Start; WindowEnd = Format-Date $e.End
         ActionsInWindow = ''; ActionsCoveredByRole = ''; WindowVerdict = 'Eligible'; SuggestedRoles = ''
-        RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable
+        RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable
         PeriodStartUtc = Format-Date $periodStart; ReportGeneratedUtc = $reportTime
     })
 }
@@ -567,7 +686,7 @@ foreach ($role in ($roleList | Where-Object { -not $_.Ignored })) {
         CoveringRoles = ''; LeastPrivilegedRoles = ''; CandidateRoles = ''
         RoleName = $role.Name; RoleId = $role.Id; RoleIsPrivileged = $role.IsPrivileged; AssignmentSource = ''; Scope = ''
         WindowStart = ''; WindowEnd = ''; ActionsInWindow = ''; ActionsCoveredByRole = ''; WindowVerdict = ''; SuggestedRoles = ''
-        RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable
+        RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable
         PeriodStartUtc = Format-Date $periodStart; ReportGeneratedUtc = $reportTime
     })
 }
