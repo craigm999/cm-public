@@ -134,3 +134,9 @@ Open `LeastPrivilegeDashboard.html` and drop the CSV onto it (or **Sample data**
 
 Audit logs don't record which role was used for an action, so the report assumes the
 least-privileged active role that grants the permission was used.
+
+---
+
+## Running on a schedule
+
+These reports can be run automatically and published in a private, Entra-protected portal: see [ReportingPlatform](../ReportingPlatform/README.md).

@@ -1,0 +1,5 @@
+{
+  "bindings": [
+    { "name": "Timer", "type": "timerTrigger", "direction": "in", "schedule": "%SCHEDULE_CONDITIONAL_ACCESS%", "runOnStartup": false }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "$comment": "Report registry: one entry per report / dashboard tab. The build copies each script (and the other .ps1/.csv files in its folder) to scripts/, and each dashboard to www/reports/<id>.html. Schedules are app settings (see Terraform var.report_schedules) referenced by each timer function's function.json.",
+  "reports": [
+    {
+      "id": "least-privilege",
+      "title": "Least privilege",
+      "description": "Admin actions compared with the Entra roles held at the time.",
+      "script": "Entra/Get-EntraLeastPrivilegeReport.ps1",
+      "dashboard": "Entra/LeastPrivilegeDashboard.html",
+      "auth": "graph",
+      "parameters": { "Days": 30 }
+    },
+    {
+      "id": "azure-changes",
+      "title": "Azure changes",
+      "description": "Resources created, changed and deleted across all subscriptions, and who did it.",
+      "script": "Azure/Get-AzureResourceChangeReport.ps1",
+      "dashboard": "Azure/AzureChangeDashboard.html",
+      "auth": "managedIdentityParameter",
+      "parameters": { "Days": 30 }
+    },
+    {
+      "id": "app-signins",
+      "title": "Applications",
+      "description": "App registrations and enterprise apps: last sign-in and ownership.",
+      "script": "Entra/Get-EntraAppSignInReport.ps1",
+      "dashboard": "Entra/AppSignInDashboard.html",
+      "auth": "graph",
+      "parameters": {}
+    },
+    {
+      "id": "conditional-access",
+      "title": "Conditional Access",
+      "description": "Policy overlap, inclusions and exclusions.",
+      "script": "Entra/Get-EntraCAPolicyReport.ps1",
+      "dashboard": "Entra/CAPolicyDashboard.html",
+      "auth": "graph",
+      "parameters": {}
+    }
+  ]
+}

@@ -1,0 +1,203 @@
+# Identity & Azure reporting platform: infrastructure (Terraform) + Function App code.
+#
+# Stages: Validate -> Plan -> Apply (approval) -> Deploy code
+#
+# Requirements:
+#   * Self-hosted agent pool with network access to the private endpoints (Terraform state,
+#     Function App deployment) and these tools: terraform (>= 1.9), pwsh (7.4+), az CLI.
+#   * An Azure Resource Manager service connection using workload identity federation.
+#     Its identity needs, on the target resource group: Contributor, plus Role Based Access
+#     Control Administrator (ideally conditioned to the roles in infra/rbac.tf); Network
+#     Contributor on the VNet/subnets; Private DNS Zone Contributor on the privatelink zones
+#     if Terraform registers the endpoints; and Storage Blob Data Contributor on the
+#     Terraform state container.
+#   * Variable group 'identity-reporting-<env>' with:
+#       TF_STATE_RESOURCE_GROUP, TF_STATE_STORAGE_ACCOUNT, TF_STATE_CONTAINER
+#   * An environment 'identity-reporting-<env>' with approval checks.
+#   * infra/environments/<env>.tfvars committed (copy prd.tfvars.example).
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [ReportingPlatform/*, Entra/*, Azure/*]
+
+pr:
+  branches:
+    include: [main]
+  paths:
+    include: [ReportingPlatform/*, Entra/*, Azure/*]
+
+parameters:
+  - name: environment
+    displayName: Environment
+    type: string
+    default: prd
+
+variables:
+  - group: identity-reporting-${{ parameters.environment }}
+  - name: serviceConnection
+    value: sc-identity-reporting-${{ parameters.environment }}   # change to your service connection name
+  - name: agentPool
+    value: self-hosted-private                                    # change to your self-hosted pool
+  - name: infraDir
+    value: $(Build.SourcesDirectory)/ReportingPlatform/infra
+  - name: graphModuleVersion
+    value: '2.25.0'                                               # Microsoft.Graph.Authentication bundled in the app
+  - name: tfVarFile
+    value: environments/${{ parameters.environment }}.tfvars
+  - name: tfStateKey
+    value: identity-reporting/${{ parameters.environment }}.tfstate
+
+pool:
+  name: $(agentPool)
+
+stages:
+  # ---------------------------------------------------------------------------------
+  - stage: Validate
+    jobs:
+      - job: Terraform
+        steps:
+          - checkout: self
+          - pwsh: |
+              terraform version
+              terraform fmt -check -recursive
+              terraform init -backend=false -input=false
+              terraform validate
+              terraform test
+            displayName: fmt, validate, test (mocked provider)
+            workingDirectory: $(infraDir)
+
+      - job: PowerShell
+        steps:
+          - checkout: self
+          - pwsh: |
+              $errors = 0
+              Get-ChildItem -Path ReportingPlatform, Entra, Azure -Recurse -Include *.ps1, *.psm1 | ForEach-Object {
+                $tokens = $null; $parseErrors = $null
+                [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+                foreach ($e in $parseErrors) { Write-Host "##vso[task.logissue type=error;sourcepath=$($_.FullName);linenumber=$($e.Extent.StartLineNumber)]$($e.Message)"; $errors++ }
+              }
+              if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-Module PSScriptAnalyzer -Scope CurrentUser -Force }
+              $findings = foreach ($dir in 'ReportingPlatform', 'Entra', 'Azure') { Invoke-ScriptAnalyzer -Path $dir -Recurse -Severity Error }
+              $findings | ForEach-Object { Write-Host "##vso[task.logissue type=error;sourcepath=$($_.ScriptPath);linenumber=$($_.Line)]$($_.RuleName): $($_.Message)"; $errors++ }
+              if ($errors) { throw "$errors PowerShell error(s)." }
+            displayName: Parse and analyse PowerShell
+            workingDirectory: $(Build.SourcesDirectory)
+          - pwsh: |
+              ./ReportingPlatform/build/Build-FunctionPackage.ps1 `
+                -OutputPath "$(Build.ArtifactStagingDirectory)/app/reporting-app.zip" `
+                -GraphModuleVersion '$(graphModuleVersion)'
+            displayName: Build Function App package
+            workingDirectory: $(Build.SourcesDirectory)
+          - publish: $(Build.ArtifactStagingDirectory)/app
+            artifact: app
+
+  # ---------------------------------------------------------------------------------
+  - stage: Plan
+    dependsOn: Validate
+    jobs:
+      - job: Plan
+        steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: terraform plan
+            inputs:
+              azureSubscription: $(serviceConnection)
+              scriptType: pscore
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              workingDirectory: $(infraDir)
+              inlineScript: |
+                $env:ARM_CLIENT_ID = $env:servicePrincipalId
+                $env:ARM_OIDC_TOKEN = $env:idToken
+                $env:ARM_TENANT_ID = $env:tenantId
+                $env:ARM_SUBSCRIPTION_ID = (az account show --query id -o tsv)
+                $env:ARM_USE_OIDC = 'true'
+                terraform init -input=false `
+                  -backend-config="resource_group_name=$(TF_STATE_RESOURCE_GROUP)" `
+                  -backend-config="storage_account_name=$(TF_STATE_STORAGE_ACCOUNT)" `
+                  -backend-config="container_name=$(TF_STATE_CONTAINER)" `
+                  -backend-config="key=$(tfStateKey)"
+                terraform plan -input=false -var-file="$(tfVarFile)" -out=tfplan
+                if ($LASTEXITCODE) { throw 'terraform plan failed' }
+                terraform show -no-color tfplan > tfplan.txt
+          - publish: $(infraDir)/tfplan
+            artifact: tfplan
+          - publish: $(infraDir)/tfplan.txt
+            artifact: tfplan-text
+
+  # ---------------------------------------------------------------------------------
+  - stage: Apply
+    dependsOn: Plan
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+      - deployment: Apply
+        environment: identity-reporting-${{ parameters.environment }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - download: current
+                  artifact: tfplan
+                - task: AzureCLI@2
+                  name: tf
+                  displayName: terraform apply
+                  inputs:
+                    azureSubscription: $(serviceConnection)
+                    scriptType: pscore
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    workingDirectory: $(infraDir)
+                    inlineScript: |
+                      $env:ARM_CLIENT_ID = $env:servicePrincipalId
+                      $env:ARM_OIDC_TOKEN = $env:idToken
+                      $env:ARM_TENANT_ID = $env:tenantId
+                      $env:ARM_SUBSCRIPTION_ID = (az account show --query id -o tsv)
+                      $env:ARM_USE_OIDC = 'true'
+                      terraform init -input=false `
+                        -backend-config="resource_group_name=$(TF_STATE_RESOURCE_GROUP)" `
+                        -backend-config="storage_account_name=$(TF_STATE_STORAGE_ACCOUNT)" `
+                        -backend-config="container_name=$(TF_STATE_CONTAINER)" `
+                        -backend-config="key=$(tfStateKey)"
+                      terraform apply -input=false "$(Pipeline.Workspace)/tfplan/tfplan"
+                      if ($LASTEXITCODE) { throw 'terraform apply failed' }
+                      $out = terraform output -json | ConvertFrom-Json
+                      Write-Host "##vso[task.setvariable variable=functionAppName;isOutput=true]$($out.function_app_name.value)"
+                      Write-Host "##vso[task.setvariable variable=resourceGroupName;isOutput=true]$($out.resource_group_name.value)"
+                      Write-Host "Managed identity principal ID (grant permissions with setup/Set-ReportingPrerequisites.ps1 -Stage Permissions): $($out.managed_identity_principal_id.value)"
+
+  # ---------------------------------------------------------------------------------
+  - stage: Deploy
+    dependsOn: Apply
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    variables:
+      functionAppName: $[ stageDependencies.Apply.Apply.outputs['Apply.tf.functionAppName'] ]
+      resourceGroupName: $[ stageDependencies.Apply.Apply.outputs['Apply.tf.resourceGroupName'] ]
+    jobs:
+      - deployment: DeployCode
+        environment: identity-reporting-${{ parameters.environment }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: app
+                - task: AzureCLI@2
+                  displayName: Deploy Function App package
+                  inputs:
+                    azureSubscription: $(serviceConnection)
+                    scriptType: pscore
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az functionapp deployment source config-zip `
+                        --resource-group "$(resourceGroupName)" `
+                        --name "$(functionAppName)" `
+                        --src "$(Pipeline.Workspace)/app/reporting-app.zip"
+                      if ($LASTEXITCODE) { throw 'Deployment failed' }
+                      $functions = az functionapp function list -g "$(resourceGroupName)" -n "$(functionAppName)" --query "[].name" -o tsv
+                      Write-Host "Functions registered:`n$functions"
+                      foreach ($expected in 'Api', 'Web', 'ReportLeastPrivilege', 'ReportAzureChanges', 'ReportAppSignIns', 'ReportConditionalAccess') {
+                        if (-not ($functions | Where-Object { $_ -like "*/$expected" })) { throw "Function '$expected' isn't registered after deployment." }
+                      }

@@ -946,6 +946,24 @@
   ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement) $('drop').classList.remove('over'); }));
   document.addEventListener('drop', e => readFile(e.dataTransfer.files[0]));
   let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (USERS.length) render(); }, 150); });
+  // Hosted mode: the reporting portal opens this page with ?src=/api/... to load a stored report.
+  // Only same-origin /api/ paths are accepted.
+  (() => {
+    const qs = new URLSearchParams(location.search);
+    const src = qs.get('src');
+    if (!src || !/^\/api\/[\w\-\/.]+$/.test(src)) return;
+    const msg = document.querySelector('#drop strong');
+    if (msg) msg.textContent = 'Loading report…';
+    fetch(src, { credentials: 'same-origin', cache: 'no-store' })
+      .then(async r => {
+        if (r.ok) return r.text();
+        let detail = `${r.status} ${r.statusText}`;
+        try { const j = await r.json(); if (j && j.error) detail = j.error; } catch (_) { /* not JSON */ }
+        throw new Error(detail);
+      })
+      .then(text => load(text, qs.get('label') || 'Latest report'))
+      .catch(e => { if (msg) msg.textContent = e.message; });
+  })();
 })();
 </script>
 </body>

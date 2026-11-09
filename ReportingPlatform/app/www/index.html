@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Identity &amp; Azure Reports</title>
+<!--
+  Reporting portal shell. Tabs come from /api/reports (the report registry in reports.json),
+  so adding a report needs no change here. Each tab hosts that report's dashboard
+  (www/reports/<id>.html) in a same-origin frame, which loads its data from the API.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ee;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6; --accent-wash: rgba(42,120,214,0.10);
+    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b; --neutral: #c3c2b7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+      --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --border: rgba(255,255,255,0.10);
+      --accent: #3987e5; --accent-wash: rgba(57,135,229,0.16); --neutral: #6b6a66;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5; --accent-wash: rgba(57,135,229,0.16); --neutral: #6b6a66;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; }
+  header.top { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 16px; }
+  .bar { max-width: 1320px; margin: 0 auto; display: flex; align-items: center; gap: 16px; min-height: 52px; flex-wrap: wrap; }
+  .brand { font-weight: 600; font-size: 16px; margin-right: auto; }
+  .user { color: var(--ink-2); font-size: 13px; }
+  .user a { color: inherit; }
+  nav.tabs { max-width: 1320px; margin: 0 auto; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
+  nav.tabs button { font: inherit; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--ink-2); padding: 10px 12px; cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+  nav.tabs button:hover { color: var(--ink); }
+  nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+  nav.tabs button:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--neutral); flex: none; }
+  .dot.succeeded { background: var(--good); } .dot.failed { background: var(--critical); } .dot.running { background: var(--warning); }
+  .toolbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 16px; }
+  .toolbar .bar { min-height: 36px; gap: 8px 16px; font-size: 13px; color: var(--ink-2); }
+  .toolbar .desc { margin-right: auto; }
+  .status { display: inline-flex; align-items: center; gap: 6px; }
+  .toolbar select, .toolbar a.btn { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; text-decoration: none; }
+  .toolbar a.btn:hover { background: var(--surface-2); }
+  details.warn { width: 100%; }
+  details.warn summary { cursor: pointer; color: var(--ink-2); }
+  details.warn ul { margin: 6px 0 0; padding-left: 18px; }
+  .error { width: 100%; color: var(--critical); }
+  main { flex: 1; min-height: 0; position: relative; }
+  main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--page); }
+  .empty { max-width: 640px; margin: 48px auto; padding: 0 16px; color: var(--ink-2); text-align: center; }
+  .empty strong { display: block; color: var(--ink); font-size: 16px; margin-bottom: 6px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="bar">
+    <div class="brand">Identity &amp; Azure reports</div>
+    <div class="user" id="user"></div>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Reports" id="tabs"></nav>
+</header>
+<div class="toolbar hidden" id="toolbar">
+  <div class="bar">
+    <span class="desc" id="desc"></span>
+    <span class="status" id="status"></span>
+    <label>Run <select id="run" aria-label="Report run"></select></label>
+    <a class="btn" id="download" href="#" download>Download CSV</a>
+    <div id="extra" style="width:100%" class="hidden"></div>
+  </div>
+</div>
+<main id="main"><div class="empty" id="empty"><strong>Loading reports…</strong></div></main>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const fmt = (iso) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? '' : d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; };
+  let REPORTS = [];
+  const frames = new Map();     // id -> iframe
+  const runs = new Map();       // id -> selected run ('latest' or date)
+  let current = null;
+
+  function dataUrl(r, run) {
+    return run && run !== 'latest' ? `/api/reports/${encodeURIComponent(r.id)}/history/${run}` : `/api/reports/${encodeURIComponent(r.id)}/latest`;
+  }
+  function frameUrl(r, run) {
+    const label = run && run !== 'latest' ? `${r.title} · ${run}` : `${r.title} · latest run`;
+    return `${r.dashboard}?src=${encodeURIComponent(dataUrl(r, run))}&label=${encodeURIComponent(label)}`;
+  }
+
+  function renderTabs() {
+    const nav = $('tabs'); nav.replaceChildren();
+    REPORTS.forEach(r => {
+      const b = el('button'); b.type = 'button'; b.setAttribute('role', 'tab'); b.id = `tab-${r.id}`;
+      b.setAttribute('aria-selected', String(r.id === current)); b.setAttribute('aria-controls', 'main');
+      b.tabIndex = r.id === current ? 0 : -1;
+      const d = el('span', `dot ${r.status ? r.status.result : ''}`); d.setAttribute('aria-hidden', 'true');
+      b.append(d, document.createTextNode(r.title));
+      b.title = r.status ? `Last run ${r.status.result}, ${fmt(r.status.finished || r.status.started)}` : 'Not run yet';
+      b.addEventListener('click', () => select(r.id));
+      b.addEventListener('keydown', (e) => {
+        const i = REPORTS.findIndex(x => x.id === r.id);
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+          const n = REPORTS[(i + (e.key === 'ArrowRight' ? 1 : -1) + REPORTS.length) % REPORTS.length];
+          select(n.id); $(`tab-${n.id}`).focus();
+        }
+      });
+      nav.append(b);
+    });
+  }
+
+  function renderToolbar(r) {
+    $('toolbar').classList.remove('hidden');
+    $('desc').textContent = r.description || '';
+    const st = $('status'); st.replaceChildren();
+    const extra = $('extra'); extra.replaceChildren(); extra.classList.add('hidden');
+    const s = r.status;
+    if (!s) st.append(el('span', 'dot'), document.createTextNode('Not run yet'));
+    else {
+      st.append(el('span', `dot ${s.result}`), document.createTextNode(
+        `${s.result === 'succeeded' ? 'Last run' : s.result === 'failed' ? 'Last run failed' : 'Running since'} ${fmt(s.finished || s.started)}` +
+        (s.result === 'succeeded' && s.rows != null ? ` · ${Number(s.rows).toLocaleString()} rows` : '')));
+      if (s.result === 'failed' && s.error) { extra.classList.remove('hidden'); extra.append(el('div', 'error', `Error: ${s.error} (showing the last successful run)`)); }
+      if (s.warnings && s.warnings.length) {
+        extra.classList.remove('hidden');
+        const d = el('details', 'warn'); d.append(el('summary', '', `${s.warnings.length} warning(s) from the last run`));
+        const ul = el('ul'); s.warnings.forEach(w => ul.append(el('li', '', w))); d.append(ul); extra.append(d);
+      }
+    }
+    const sel = $('run'); sel.replaceChildren(new Option('Latest', 'latest'));
+    sel.value = runs.get(r.id) || 'latest';
+    fetch(`/api/reports/${encodeURIComponent(r.id)}/history`, { credentials: 'same-origin', cache: 'no-store' })
+      .then(x => x.ok ? x.json() : { dates: [] })
+      .then(h => { if (current !== r.id) return; (h.dates || []).forEach(d => sel.add(new Option(d, d))); sel.value = runs.get(r.id) || 'latest'; })
+      .catch(() => {});
+    $('download').classList.toggle('hidden', !s || !s.rows && s.result !== 'succeeded');
+    const dl = $('download'); dl.href = dataUrl(r, runs.get(r.id)); dl.setAttribute('download', `${r.id}${runs.get(r.id) && runs.get(r.id) !== 'latest' ? '-' + runs.get(r.id) : ''}.csv`);
+  }
+
+  function select(id, fromHash) {
+    const r = REPORTS.find(x => x.id === id) || REPORTS[0];
+    if (!r) return;
+    current = r.id;
+    if (!fromHash && location.hash !== `#${r.id}`) history.replaceState(null, '', `#${r.id}`);
+    renderTabs(); renderToolbar(r);
+    $('empty').classList.add('hidden');
+    frames.forEach((f, k) => f.classList.toggle('hidden', k !== r.id));
+    if (!frames.has(r.id)) {
+      const f = el('iframe'); f.title = `${r.title} report`; f.src = frameUrl(r, runs.get(r.id));
+      frames.set(r.id, f); $('main').append(f);
+    }
+    document.title = `${r.title} · Identity & Azure Reports`;
+  }
+
+  $('run').addEventListener('change', (e) => {
+    const r = REPORTS.find(x => x.id === current); if (!r) return;
+    runs.set(r.id, e.target.value);
+    frames.get(r.id).src = frameUrl(r, e.target.value);
+    renderToolbar(r);
+  });
+  addEventListener('hashchange', () => select(location.hash.slice(1), true));
+
+  fetch('/api/reports', { credentials: 'same-origin', cache: 'no-store' })
+    .then(r => { if (r.status === 401) { location.href = '/.auth/login/aad?post_login_redirect_uri=' + encodeURIComponent(location.pathname + location.hash); throw new Error('Sign-in required'); } if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.json(); })
+    .then(data => {
+      REPORTS = data.reports || [];
+      const u = $('user'); u.replaceChildren(document.createTextNode(data.user ? `${data.user} · ` : ''));
+      const out = el('a', '', 'Sign out'); out.href = '/.auth/logout'; u.append(out);
+      if (!REPORTS.length) { $('empty').replaceChildren(el('strong', '', 'No reports are configured.')); return; }
+      select(location.hash.slice(1), true);
+    })
+    .catch(e => { const m = $('empty'); m.replaceChildren(el('strong', '', 'Couldn\'t load the report list.'), document.createTextNode(e.message)); });
+})();
+</script>
+</body>
+</html>

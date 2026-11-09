@@ -41,3 +41,9 @@ The CSV has `Change`, `Resource` and `Subscription` rows. Subscriptions that cou
 Open `AzureChangeDashboard.html` and drop the CSV onto it (or **Sample data** for a demo).
 Filter by subscription, period, people vs. apps, change type, or search. Click any chart, a person,
 a resource or a deployment to see the matching changes; click a resource name for its full history.
+
+---
+
+## Running on a schedule
+
+These reports can be run automatically and published in a private, Entra-protected portal: see [ReportingPlatform](../ReportingPlatform/README.md).

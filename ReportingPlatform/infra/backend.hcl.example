@@ -1,0 +1,4 @@
+resource_group_name  = "rg-terraform-state"
+storage_account_name = "sttfstateexample"
+container_name       = "tfstate"
+key                  = "identity-reporting/prd.tfstate"

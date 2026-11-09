@@ -55,6 +55,12 @@
 .PARAMETER SkipResourceGraphChanges
     Don't query Resource Graph for property-level change details.
 
+.PARAMETER ManagedIdentityClientId
+    Run unattended as this user-assigned managed identity (e.g. in Azure Functions), getting
+    tokens straight from the platform's identity endpoint. Az.Accounts isn't loaded in this
+    mode, which avoids assembly conflicts with Microsoft.Graph.Authentication in the same
+    PowerShell host. -TenantId is required.
+
 .PARAMETER OutputPath
     CSV to write.
 
@@ -74,6 +80,7 @@ param(
     [switch]$IncludeFailed,
     [string]$CreatorTagName = 'CreatedBy',
     [switch]$SkipResourceGraphChanges,
+    [string]$ManagedIdentityClientId,
     [string]$OutputPath
 )
 
@@ -107,18 +114,58 @@ function ConvertTo-UtcDate {
 
 function Format-Date($d) { if ($d) { $d.ToString('yyyy-MM-ddTHH:mm:ssZ') } else { '' } }
 
-function Invoke-Rest {
-    <# Invoke-AzRestMethod with retries on throttling / transient errors. Returns parsed JSON or throws. #>
+$script:MiTokens = @{}
+function Get-ManagedIdentityToken {
+    <# Token for a resource from the App Service / Functions identity endpoint, or IMDS on a VM. Cached until near expiry. #>
+    param([string]$Resource)
+    $cached = $script:MiTokens[$Resource]
+    if ($cached -and $cached.Expires -gt [datetime]::UtcNow.AddMinutes(5)) { return $cached.Token }
+    if ($env:IDENTITY_ENDPOINT -and $env:IDENTITY_HEADER) {
+        $uri = "$($env:IDENTITY_ENDPOINT)?resource=$([uri]::EscapeDataString($Resource))&api-version=2019-08-01&client_id=$ManagedIdentityClientId"
+        $r = Invoke-RestMethod -Uri $uri -Headers @{ 'X-IDENTITY-HEADER' = $env:IDENTITY_HEADER }
+    } else {
+        $uri = "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=$([uri]::EscapeDataString($Resource))&client_id=$ManagedIdentityClientId"
+        $r = Invoke-RestMethod -Uri $uri -Headers @{ Metadata = 'true' }
+    }
+    $expires = [DateTimeOffset]::FromUnixTimeSeconds([long]$r.expires_on).UtcDateTime
+    $script:MiTokens[$Resource] = @{ Token = $r.access_token; Expires = $expires }
+    return $r.access_token
+}
+
+function Invoke-ApiRequest {
+    <#
+        Sends an ARM or Graph request and returns an object shaped like Invoke-AzRestMethod's
+        (StatusCode, Content, Headers). Uses the managed identity when -ManagedIdentityClientId
+        is set, otherwise Invoke-AzRestMethod with the signed-in Az context.
+    #>
     param([string]$Uri, [string]$Method = 'GET', [string]$Payload)
-    for ($attempt = 1; $attempt -le 6; $attempt++) {
+    if (-not $ManagedIdentityClientId) {
         $params = @{ Uri = $Uri; Method = $Method }
         if ($Payload) { $params.Payload = $Payload }
-        $r = Invoke-AzRestMethod @params
+        return Invoke-AzRestMethod @params
+    }
+    $resource = if ($Uri -like 'https://graph.microsoft.com/*') { 'https://graph.microsoft.com' } else { 'https://management.azure.com/' }
+    $headers = @{ Authorization = "Bearer $(Get-ManagedIdentityToken $resource)" }
+    $p = @{ Uri = $Uri; Method = $Method; Headers = $headers; SkipHttpErrorCheck = $true; UseBasicParsing = $true }
+    if ($Payload) { $p.Body = $Payload; $p.ContentType = 'application/json' }
+    $r = Invoke-WebRequest @p
+    $ra = $r.Headers['Retry-After']
+    return [pscustomobject]@{ StatusCode = [int]$r.StatusCode; Content = [string]$r.Content; Headers = @{ RetryAfterSeconds = $(if ($ra) { [int](@($ra)[0]) } else { $null }) } }
+}
+
+function Invoke-Rest {
+    <# ARM / Graph request with retries on throttling / transient errors. Returns parsed JSON or throws. #>
+    param([string]$Uri, [string]$Method = 'GET', [string]$Payload)
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        $r = Invoke-ApiRequest -Uri $Uri -Method $Method -Payload $Payload
         $code = [int]$r.StatusCode
         if ($code -ge 200 -and $code -lt 300) { return ($r.Content | ConvertFrom-Json) }
         if ($code -eq 429 -or $code -ge 500) {
             $wait = 10
-            try { $ra = $r.Headers.RetryAfter.Delta.TotalSeconds; if ($ra) { $wait = [math]::Ceiling($ra) } } catch { }
+            try {
+                $ra = if ($r.Headers -is [System.Collections.IDictionary]) { $r.Headers['RetryAfterSeconds'] } else { $r.Headers.RetryAfter.Delta.TotalSeconds }
+                if ($ra) { $wait = [math]::Ceiling($ra) }
+            } catch { }
             Start-Sleep -Seconds ([math]::Min(60, $wait * $attempt))
             continue
         }
@@ -166,17 +213,22 @@ function Split-ResourceId {
 
 #region Connect & subscriptions ---------------------------------------------------
 
-if (-not (Get-Module -ListAvailable -Name Az.Accounts)) {
-    throw 'Az.Accounts module not found. Install it with: Install-Module Az.Accounts -Scope CurrentUser'
-}
-Import-Module Az.Accounts
-$ctx = Get-AzContext
-if (-not $ctx -or ($TenantId -and $ctx.Tenant.Id -ne $TenantId)) {
-    $p = @{}; if ($TenantId) { $p.TenantId = $TenantId }
-    Connect-AzAccount @p | Out-Null
+if ($ManagedIdentityClientId) {
+    if (-not $TenantId) { throw '-TenantId is required with -ManagedIdentityClientId.' }
+    Write-Host "Using managed identity $ManagedIdentityClientId"
+} else {
+    if (-not (Get-Module -ListAvailable -Name Az.Accounts)) {
+        throw 'Az.Accounts module not found. Install it with: Install-Module Az.Accounts -Scope CurrentUser'
+    }
+    Import-Module Az.Accounts
     $ctx = Get-AzContext
+    if (-not $ctx -or ($TenantId -and $ctx.Tenant.Id -ne $TenantId)) {
+        $p = @{}; if ($TenantId) { $p.TenantId = $TenantId }
+        Connect-AzAccount @p | Out-Null
+        $ctx = Get-AzContext
+    }
+    if (-not $TenantId) { $TenantId = $ctx.Tenant.Id }
 }
-if (-not $TenantId) { $TenantId = $ctx.Tenant.Id }
 
 $now = [datetime]::UtcNow
 $start = $now.AddDays(-$Days)
@@ -312,7 +364,7 @@ function Resolve-AppName {
     if ($appNames.ContainsKey($AppId)) { return $appNames[$AppId] }
     $name = $null
     try {
-        $r = Invoke-AzRestMethod -Uri "https://graph.microsoft.com/v1.0/servicePrincipals(appId='$AppId')?`$select=displayName,servicePrincipalType" -Method GET
+        $r = Invoke-ApiRequest -Uri "https://graph.microsoft.com/v1.0/servicePrincipals(appId='$AppId')?`$select=displayName,servicePrincipalType" -Method GET
         if ([int]$r.StatusCode -eq 200) { $j = $r.Content | ConvertFrom-Json; $name = $j.displayName }
     } catch { }
     $appNames[$AppId] = $name

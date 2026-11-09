@@ -1,0 +1,26 @@
+resource_group_name          = "rg-identity-reporting-prd"
+name_prefix                  = "idrpt"
+environment                  = "prd"
+virtual_network_name         = "vnet-spoke-prd-uks"
+private_endpoint_subnet_name = "snet-private-endpoints"
+
+# Either an existing subnet delegated to Microsoft.App/environments ...
+# integration_subnet_name = "snet-flex-functions"
+# ... or a range for a new /27 (or larger) in the VNet:
+integration_subnet_address_prefix = "10.20.4.0/27"
+
+# Leave out any zone whose records your platform creates (e.g. via Azure Policy).
+private_dns_zone_ids = {
+  blob  = "/subscriptions/<hub-sub>/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+  queue = "/subscriptions/<hub-sub>/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.queue.core.windows.net"
+  table = "/subscriptions/<hub-sub>/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.table.core.windows.net"
+  sites = "/subscriptions/<hub-sub>/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.azurewebsites.net"
+}
+
+# From setup/Set-ReportingPrerequisites.ps1 -Stage AppRegistration
+easy_auth_client_id = "00000000-0000-0000-0000-000000000000"
+
+tags = {
+  owner       = "identity-team"
+  costcentre  = "IT-SEC"
+}
