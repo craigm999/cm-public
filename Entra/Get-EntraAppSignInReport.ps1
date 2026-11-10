@@ -64,16 +64,26 @@
 .PARAMETER CredentialWarningDays
     Credentials expiring within this many days are flagged 'Expiring soon'. Default 30.
 
+.PARAMETER IncludeRecentUsers
+    Also list the most recent users to sign in to each app (interactive or non-interactive),
+    from the sign-in logs. Off by default: sign-in log queries are slow, so this adds time
+    on tenants with many active apps.
+
+    To keep it as quick as possible, only apps the sign-in activity report shows had user
+    sign-ins in the period are queried, the queries are sent 20 at a time with Graph $batch,
+    and each app's search starts with the day before its last user sign-in, widening to 7
+    days and then the whole period only when that didn't find enough users.
+
 .PARAMETER RecentUserCount
-    How many of the most recent distinct users to list per app. Default 5.
+    With -IncludeRecentUsers: how many of the most recent distinct users to list per app. Default 5.
 
 .PARAMETER RecentSignInDays
-    How far back to look in the sign-in logs for recent users (max 30, the log retention
-    on P1/P2). Default 30. Only apps the sign-in activity report shows had delegated (user)
-    sign-ins in this period are queried, to keep the number of log queries down.
+    With -IncludeRecentUsers: how far back to look in the sign-in logs (max 30, the log
+    retention on P1/P2). Default 30.
 
 .PARAMETER SkipRecentUsers
-    Don't query the sign-in logs for recent users (faster for very large tenants).
+    Obsolete: recent users are now off unless -IncludeRecentUsers is used. Kept so existing
+    commands still run.
 
 .PARAMETER OutputPath
     Optional path to export the results to CSV.
@@ -111,6 +121,7 @@ param(
 
     [ValidateRange(1, 365)][int]$CredentialWarningDays = 30,
 
+    [switch]$IncludeRecentUsers,
     [ValidateRange(1, 50)][int]$RecentUserCount = 5,
 
     [ValidateRange(1, 30)][int]$RecentSignInDays = 30,
@@ -305,57 +316,133 @@ function Get-CredentialSummary {
     }
 }
 
-function Get-RecentUsers {
+function Invoke-GraphGetBatch {
     <#
-        The most recent distinct users who signed in successfully to an app (as the client, or
-        to it as a resource), interactive or non-interactive, from the sign-in logs.
-        Returns @{ Users = @(...); Note = '...' }.
+        Sends GET requests through Graph $batch, 20 per call (Graph runs them in parallel), and
+        retries throttled ones. Requests: @{ Id; Url } with Url relative to the version root.
+        Returns id -> @{ Status; Body }.
     #>
-    param([string]$AppId, [ValidateSet('appId', 'resourceId')][string]$Field)
-    $since = [datetime]::UtcNow.AddDays(-$RecentSignInDays).ToString('yyyy-MM-ddTHH:mm:ssZ')
+    param([object[]]$Requests, [string]$Version = 'beta')
+    $out = @{}
+    for ($i = 0; $i -lt $Requests.Count; $i += 20) {
+        $pending = @($Requests[$i..([math]::Min($i + 19, $Requests.Count - 1))])
+        for ($attempt = 1; $pending.Count -and $attempt -le 6; $attempt++) {
+            $body = @{ requests = @($pending | ForEach-Object { @{ id = $_.Id; method = 'GET'; url = $_.Url } }) } | ConvertTo-Json -Depth 4
+            try {
+                $resp = Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/$Version/`$batch" -Body $body -ContentType 'application/json' -OutputType Hashtable
+            } catch {
+                foreach ($q in $pending) { $out[$q.Id] = @{ Status = 0; Body = @{ error = @{ message = $_.Exception.Message } } } }
+                $pending = @(); break
+            }
+            $retry = @(); $wait = 0
+            foreach ($r in @($resp['responses'])) {
+                if ($null -eq $r) { continue }
+                $id = [string]$r['id']; $code = [int]$r['status']
+                if ($code -eq 429 -or $code -ge 500) {
+                    $retry += @($pending | Where-Object { $_.Id -eq $id })
+                    $ra = Get-Prop (Get-Prop $r 'headers') 'Retry-After'
+                    $wait = [math]::Max($wait, $(if ($ra) { [int]$ra } else { 5 * $attempt }))
+                }
+                else { $out[$id] = @{ Status = $code; Body = $r['body'] } }
+            }
+            $pending = $retry
+            if ($pending.Count) { Start-Sleep -Seconds ([math]::Min(60, $wait)) }
+        }
+        foreach ($q in $pending) { $out[$q.Id] = @{ Status = 429; Body = $null } }
+    }
+    return $out
+}
+
+function Get-RecentUsersForApps {
+    <#
+        The most recent distinct users who signed in successfully to each app (as the client, or
+        to it as a resource), interactive or non-interactive, from the sign-in logs.
+        Apps: list of @{ AppId; Fields = @(@{ Field = 'appId'|'resourceId'; Last = [datetime] }) },
+        fields in the order to try. Returns appId -> @{ Users = @(...); Note = '...' }.
+
+        Sign-in log queries are slow mostly in proportion to the time range scanned, so each app's
+        search starts with the day before its last user sign-in (from the sign-in activity report)
+        and only widens (7 days, then the whole period) if that didn't find enough users. Every
+        round of queries goes out together through $batch.
+    #>
+    param([object[]]$Apps)
+    $now = [datetime]::UtcNow
+    $periodStart = $now.AddDays(-$RecentSignInDays)
+    $windows = @(@(1, 7, $RecentSignInDays) | Where-Object { $_ -le $RecentSignInDays } | Sort-Object -Unique)
     $select = 'createdDateTime,userId,userPrincipalName,userDisplayName,signInEventTypes,isInteractive,status,authenticationRequirement'
-    $filter = "$Field eq '$AppId' and createdDateTime ge $since and signInEventTypes/any(t: t eq 'interactiveUser' or t eq 'nonInteractiveUser')"
-    $uri = "https://graph.microsoft.com/beta/auditLogs/signIns?`$filter=$([uri]::EscapeDataString($filter))&`$select=$select&`$top=100"
-    $note = ''
-    $users = [ordered]@{}
-    $pages = 0
-    try {
-        $next = $uri
-        while ($next -and $users.Count -lt $RecentUserCount -and $pages -lt 10) {
-            $pages++
-            $resp = Invoke-MgGraphRequest -Method GET -Uri $next -OutputType Hashtable
-            foreach ($e in @($resp['value'])) {
+    $iso = { param($d) $d.ToString('yyyy-MM-ddTHH:mm:ssZ') }
+
+    # Points a state at the next time window for its current field, or the next field; $false when finished
+    $advance = {
+        param($st)
+        while ($true) {
+            if ($null -ne $st.Field) {
+                $st.Stage++
+                if ($st.Stage -lt $windows.Count) {
+                    $to = if ($st.Stage -eq 0) { $now } else { $st.Last.AddDays(-$windows[$st.Stage - 1]) }
+                    $from = $st.Last.AddDays(-$windows[$st.Stage]); if ($from -lt $periodStart) { $from = $periodStart }
+                    if ($to -le $from) { continue }
+                    $f = "$($st.Field) eq '$($st.AppId)' and createdDateTime ge $(& $iso $from) and createdDateTime lt $(& $iso $to) and signInEventTypes/any(t: t eq 'interactiveUser' or t eq 'nonInteractiveUser')"
+                    $st.Url = "/auditLogs/signIns?`$filter=$([uri]::EscapeDataString($f))&`$select=$select&`$top=999"
+                    $st.Pages = 0
+                    return $true
+                }
+                if ($st.Users.Count) { return $false }   # field searched; only try the next field if it found nobody
+            }
+            if (-not $st.Queue.Count) { return $false }
+            $next, $rest = $st.Queue; $st.Queue = @($rest | Where-Object { $_ })
+            $st.Field = $next.Field; $st.Last = $(if ($next.Last -and $next.Last -lt $now) { $next.Last } else { $now }); $st.Stage = -1
+        }
+    }
+
+    $states = foreach ($a in $Apps) {
+        $st = [pscustomobject]@{ AppId = $a.AppId; Queue = @($a.Fields); Field = $null; Last = $null; Stage = -1; Url = $null; Pages = 0
+            Users = [ordered]@{}; Note = ''; Done = $false }
+        if (-not (& $advance $st)) { $st.Done = $true }
+        $st
+    }
+    $states = @($states)
+    $round = 0
+    while ($true) {
+        $active = @($states | Where-Object { -not $_.Done })
+        if (-not $active.Count) { break }
+        $round++
+        Write-Progress -Activity 'Recent user sign-ins' -Status "Round $round : $($active.Count) app(s) still searching" -PercentComplete ((($states.Count - $active.Count) / [math]::Max(1, $states.Count)) * 100)
+        $byId = @{}; $reqs = for ($k = 0; $k -lt $active.Count; $k++) { $byId["q$k"] = $active[$k]; @{ Id = "q$k"; Url = $active[$k].Url } }
+        $results = Invoke-GraphGetBatch -Requests @($reqs)
+        foreach ($id in $byId.Keys) {
+            $st = $byId[$id]; $res = $results[$id]
+            if (-not $res -or $res.Status -ne 200) {
+                $msg = Get-Prop (Get-Prop (Get-Prop $res 'Body') 'error') 'message'
+                $st.Note = "sign-in logs unavailable (HTTP $(if ($res) { $res.Status } else { '?' })$(if ($msg) { ": $msg" }))"
+                $st.Done = $true; continue
+            }
+            foreach ($e in @(Get-Prop $res.Body 'value')) {
+                if ($null -eq $e) { continue }
                 if ([int](Get-Prop (Get-Prop $e 'status') 'errorCode') -ne 0) { continue }   # successful sign-ins only
-                $uid = [string](Get-Prop $e 'userId'); if (-not $uid -or $users.Contains($uid)) { continue }
+                $uid = [string](Get-Prop $e 'userId'); if (-not $uid -or $st.Users.Contains($uid)) { continue }
                 $types = @(Get-Prop $e 'signInEventTypes')
-                $users[$uid] = [pscustomobject]@{
+                $st.Users[$uid] = [pscustomobject]@{
                     Name = [string](Get-Prop $e 'userDisplayName'); Upn = [string](Get-Prop $e 'userPrincipalName')
                     When = ConvertTo-UtcDate (Get-Prop $e 'createdDateTime')
                     Type = $(if ($types -contains 'interactiveUser' -or (Get-Prop $e 'isInteractive')) { 'interactive' } else { 'non-interactive' })
                     Auth = $(if ((Get-Prop $e 'authenticationRequirement') -eq 'multiFactorAuthentication') { 'MFA' } else { 'single-factor' })
                 }
-                if ($users.Count -ge $RecentUserCount) { break }
+                if ($st.Users.Count -ge $RecentUserCount) { break }
             }
-            $next = if ($resp.ContainsKey('@odata.nextLink')) { $resp['@odata.nextLink'] } else { $null }
+            if ($st.Users.Count -ge $RecentUserCount) { $st.Done = $true; continue }
+            $nextLink = [string](Get-Prop $res.Body '@odata.nextLink')
+            if ($nextLink -and $st.Pages -lt 2) { $st.Pages++; $st.Url = $nextLink -replace '^https://graph\.microsoft\.com/(beta|v1\.0)', '' ; continue }
+            if (-not (& $advance $st)) { $st.Done = $true }
         }
     }
-    catch {
-        # Fall back to v1.0, which only returns interactive sign-ins
-        $note = 'interactive sign-ins only (beta sign-in log query failed)'
-        $users = [ordered]@{}
-        try {
-            $f = "$Field eq '$AppId' and createdDateTime ge $since"
-            $resp = Invoke-MgGraphRequest -Method GET -OutputType Hashtable -Uri "https://graph.microsoft.com/v1.0/auditLogs/signIns?`$filter=$([uri]::EscapeDataString($f))&`$top=100"
-            foreach ($e in @($resp['value'])) {
-                if ([int](Get-Prop (Get-Prop $e 'status') 'errorCode') -ne 0) { continue }
-                $uid = [string](Get-Prop $e 'userId'); if (-not $uid -or $users.Contains($uid)) { continue }
-                $users[$uid] = [pscustomobject]@{ Name = [string](Get-Prop $e 'userDisplayName'); Upn = [string](Get-Prop $e 'userPrincipalName')
-                    When = ConvertTo-UtcDate (Get-Prop $e 'createdDateTime'); Type = 'interactive'; Auth = '' }
-                if ($users.Count -ge $RecentUserCount) { break }
-            }
-        } catch { $note = "sign-in logs unavailable: $($_.Exception.Message)" }
+    Write-Progress -Activity 'Recent user sign-ins' -Completed
+    $out = @{}
+    foreach ($st in $states) {
+        # Windows are searched newest first, but sort anyway in case of overlap at the edges
+        $out[$st.AppId] = @{ Users = @($st.Users.Values | Sort-Object When -Descending); Note = $st.Note }
     }
-    return @{ Users = @($users.Values); Note = $note }
+    return $out
 }
 
 #region Connect ---------------------------------------------------------------
@@ -595,26 +682,22 @@ foreach ($p in $pending) {
 # Most recent users per app, from the sign-in logs. Only apps with delegated (user) sign-ins
 # in the period according to the sign-in activity report are queried.
 $recent = @{}
-if (-not $SkipRecentUsers -and $signInDataAvailable) {
+if ($IncludeRecentUsers -and -not $SkipRecentUsers -and $signInDataAvailable) {
     $cutoff = [datetime]::UtcNow.AddDays(-$RecentSignInDays)
-    $toQuery = @($pending | ForEach-Object { $_.AppId } | Where-Object { $_ } | Sort-Object -Unique | Where-Object {
-        $s = Get-SignInSummary -AppId $_
-        ($s.LastDelegatedClientSignIn -and $s.LastDelegatedClientSignIn -ge $cutoff) -or ($s.LastDelegatedResourceSignIn -and $s.LastDelegatedResourceSignIn -ge $cutoff)
-    })
-    Write-Host "Reading recent user sign-ins for $($toQuery.Count) apps with user activity in the last $RecentSignInDays days..." -ForegroundColor Cyan
-    $n = 0
-    foreach ($appId in $toQuery) {
-        $n++
-        Write-Progress -Activity 'Recent user sign-ins' -Status "$n of $($toQuery.Count)" -PercentComplete ($n / [math]::Max(1, $toQuery.Count) * 100)
+    $apps = foreach ($appId in @($pending | ForEach-Object { $_.AppId } | Where-Object { $_ } | Sort-Object -Unique)) {
         $s = Get-SignInSummary -AppId $appId
-        $asClient = $s.LastDelegatedClientSignIn -and $s.LastDelegatedClientSignIn -ge $cutoff
-        $r = Get-RecentUsers -AppId $appId -Field $(if ($asClient) { 'appId' } else { 'resourceId' })
-        if (-not $r.Users.Count -and $asClient -and $s.LastDelegatedResourceSignIn -and $s.LastDelegatedResourceSignIn -ge $cutoff) {
-            $r = Get-RecentUsers -AppId $appId -Field 'resourceId'
-        }
-        $recent[$appId] = $r
+        # Search as the client first (users signing in to the app), then as a resource (an API the app's users call)
+        $fields = @(
+            if ($s.LastDelegatedClientSignIn -and $s.LastDelegatedClientSignIn -ge $cutoff) { @{ Field = 'appId'; Last = $s.LastDelegatedClientSignIn } }
+            if ($s.LastDelegatedResourceSignIn -and $s.LastDelegatedResourceSignIn -ge $cutoff) { @{ Field = 'resourceId'; Last = $s.LastDelegatedResourceSignIn } }
+        )
+        if ($fields.Count) { @{ AppId = $appId; Fields = $fields } }
     }
-    Write-Progress -Activity 'Recent user sign-ins' -Completed
+    $apps = @($apps)
+    Write-Host "Reading recent user sign-ins for $($apps.Count) apps with user activity in the last $RecentSignInDays days..." -ForegroundColor Cyan
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    if ($apps.Count) { $recent = Get-RecentUsersForApps -Apps $apps }
+    Write-Host "  done in $([math]::Round($sw.Elapsed.TotalSeconds))s."
 }
 foreach ($p in $pending) {
     $r = if ($p.AppId) { $recent[$p.AppId] } else { $null }
@@ -625,7 +708,7 @@ foreach ($p in $pending) {
     } else {
         $p.Extra.RecentUsers = ''
         $p.Extra.LastUserSignIn = $null
-        $p.Extra.RecentUsersStatus = if ($SkipRecentUsers) { 'Not checked (-SkipRecentUsers)' } elseif (-not $signInDataAvailable) { 'Not checked (no sign-in activity data)' } else { "No user sign-ins in the last $RecentSignInDays days" }
+        $p.Extra.RecentUsersStatus = if (-not $IncludeRecentUsers -or $SkipRecentUsers) { 'Not checked (run with -IncludeRecentUsers)' } elseif (-not $signInDataAvailable) { 'Not checked (no sign-in activity data)' } else { "No user sign-ins in the last $RecentSignInDays days" }
     }
 }
 

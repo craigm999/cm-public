@@ -304,7 +304,7 @@
     <footer>
       <p>“Never signed in” means the sign-in activity report has no record for the app. That report only covers a limited history, and apps created recently may not have been used yet; check the Created column.</p>
       <p>App registrations take the sign-in activity of their enterprise app (service principal) in this tenant. App registrations with no enterprise app here show as never signed in.</p>
-      <p>Recent users come from the sign-in logs (last 30 days at most): the most recent distinct users who signed in successfully, interactively or not, to the app or to it as an API. Apps with no user sign-ins in that period have none listed.</p>
+      <p>Recent users (when the report is run with <code>-IncludeRecentUsers</code>) come from the sign-in logs (last 30 days at most): the most recent distinct users who signed in successfully, interactively or not, to the app or to it as an API. Apps with no user sign-ins in that period have none listed.</p>
     </footer>
   </main>
 </div>
@@ -417,7 +417,8 @@
       reportDate,
       hasOwnerStatus: cols.includes('DisabledOwnerCount'),
       hasCreds: cols.includes('CredentialStatus'),
-      hasRecent: cols.includes('RecentUsers'),
+      // Recent users are optional in the script (-IncludeRecentUsers): hide the column when they weren't checked
+      hasRecent: cols.includes('RecentUsers') && raw.some(r => r.RecentUsersStatus && !/^Not checked/.test(r.RecentUsersStatus)),
       signInAvailable: raw.some(r => bool(r.SignInDataAvailable)) || !cols.includes('SignInDataAvailable'),
     };
     ALL = raw.map((r, i) => {
@@ -837,7 +838,7 @@
 
   function renderTable(rows) {
     const head = $('thead'); head.replaceChildren();
-    COLS.forEach(c => {
+    COLS.filter(c => c.key !== 'recent' || META.hasRecent).forEach(c => {
       const th = document.createElement('th'); th.className = 'sortable'; th.scope = 'col';
       th.textContent = c.label; th.tabIndex = 0;
       th.setAttribute('aria-sort', sort.key === c.key ? (sort.dir > 0 ? 'ascending' : 'descending') : 'none');
@@ -894,8 +895,8 @@
         r.creds.slice(0, 4).forEach(c => { const d = document.createElement('div'); d.className = /\[expired\]$/.test(c) ? 'exp' : 'muted'; d.textContent = c.replace(/\s*\[expired\]$/, ' (expired)'); tC.append(d); });
         if (r.creds.length > 4) { const d = document.createElement('div'); d.className = 'muted'; d.textContent = `+${r.creds.length - 4} more`; tC.append(d); }
       }
-      const tR = td('recent');
-      if (!META.hasRecent) { tR.textContent = 'n/a'; tR.classList.add('muted'); }
+      const tR = META.hasRecent ? td('recent') : null;
+      if (!tR) { /* column hidden */ }
       else if (!r.recent.length) { tR.textContent = r.recentStatus || 'None'; tR.classList.add('muted'); }
       else r.recent.forEach(u => {
         const d = document.createElement('div');
@@ -909,7 +910,7 @@
       frag.append(tr);
     });
     if (!sorted.length) {
-      const tr = document.createElement('tr'); const d = document.createElement('td'); d.colSpan = COLS.length;
+      const tr = document.createElement('tr'); const d = document.createElement('td'); d.colSpan = COLS.length - (META.hasRecent ? 0 : 1);
       d.className = 'muted'; d.textContent = 'No apps match the current filters.'; tr.append(d); frag.append(tr);
     }
     tb.append(frag);

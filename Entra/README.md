@@ -17,10 +17,15 @@ Also reported per app:
 - **Credential expiry**: client secrets and certificates on the app registration and the enterprise
   app (e.g. SAML signing certificates): count, next expiry, expired ones, and a status (*All expired*,
   *Expiring soon* within `-CredentialWarningDays`, default 30, *OK*, *No credentials*).
-- **Recent users**: the last `-RecentUserCount` (default 5) distinct people who signed in to the app
-  successfully in the last `-RecentSignInDays` (default 30, sign-in logs are kept for 30 days on P1/P2),
-  with the time, interactive / non-interactive and MFA / single-factor. Only apps with recent delegated
-  sign-in activity are queried, so this stays quick on large tenants. Skip it with `-SkipRecentUsers`.
+- **Recent users** (optional, add `-IncludeRecentUsers`): the last `-RecentUserCount` (default 5)
+  distinct people who signed in to the app successfully in the last `-RecentSignInDays` (default 30;
+  sign-in logs are kept for 30 days on P1/P2), with the time, interactive / non-interactive and
+  MFA / single-factor. It's off by default because sign-in log queries are slow. To keep it as
+  quick as possible, only apps with recent user sign-ins are queried, 20 at a time through Graph
+  `$batch`, and each search starts with the day before the app's last user sign-in, widening to
+  7 days and then the whole period only if it hasn't found enough users. The script prints how
+  long this step took. To include it in the scheduled portal report, add
+  `"parameters": { "IncludeRecentUsers": true }` to the `app-signins` entry in `reports.json`.
 
 Apps created by **Copilot Studio** (formerly **Power Virtual Agents**) are detected from the tags
 Copilot Studio puts on their service principals (`AgentCreatedBy:CopilotStudio`,
@@ -41,7 +46,8 @@ The dashboard highlights:
 - **Unused > 2 years** – threshold adjustable to 1 or 3 years
 - **Credential expiry** – expired, expiring within 30 days, within 90 days, OK, or no credentials;
   each app's next expiry is shown in the table
-- **Recent users** column – the last people who signed in, with how they signed in
+- **Recent users** column – the last people who signed in, with how they signed in (shown when the
+  report was run with `-IncludeRecentUsers`)
 
 Tick **Hide Copilot Studio / PVA apps** to filter those agents out of every chart and the table.
 
