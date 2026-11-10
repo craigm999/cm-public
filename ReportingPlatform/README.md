@@ -108,7 +108,7 @@ build time, so they can still be run locally and the dashboards opened offline w
 
 | Where | Permission | Used by |
 |---|---|---|
-| Microsoft Graph (application) | `Directory.Read.All`, `AuditLog.Read.All`, `Application.Read.All`, `Policy.Read.All`, `RoleManagement.Read.Directory` | Entra reports (all read-only) |
+| Microsoft Graph (application) | `Directory.Read.All`, `AuditLog.Read.All`, `Application.Read.All`, `Policy.Read.All`, `RoleManagement.Read.Directory` | Entra reports, and account status for the Azure report's RBAC review (all read-only) |
 | Management group (default: tenant root) | Reader | Azure changes report |
 | Reports storage `reports` container | Storage Blob Data Contributor | writing / reading reports |
 | Host storage | Blob Data Owner, Queue + Table Data Contributor | Functions runtime |

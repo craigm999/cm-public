@@ -15,7 +15,7 @@
     --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
     --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
     --series-1: #2a78d6; --c-create: #2a78d6; --c-update: #1baf7a; --c-delete: #eb6834;
-    --warning: #fab219; --critical: #d03b3b; --neutral: #c3c2b7;
+    --warning: #fab219; --critical: #d03b3b; --critical-text: #b42f2f; --neutral: #c3c2b7;
     --accent-wash: rgba(42,120,214,0.10);
   }
   @media (prefers-color-scheme: dark) {
@@ -25,7 +25,7 @@
       --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
       --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
       --series-1: #3987e5; --c-create: #3987e5; --c-update: #199e70; --c-delete: #d95926;
-      --neutral: #6b6a66; --accent-wash: rgba(57,135,229,0.16);
+      --neutral: #6b6a66; --accent-wash: rgba(57,135,229,0.16); --critical-text: #f07070;
     }
   }
   :root[data-theme="dark"] {
@@ -34,7 +34,7 @@
     --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
     --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
     --series-1: #3987e5; --c-create: #3987e5; --c-update: #199e70; --c-delete: #d95926;
-    --neutral: #6b6a66; --accent-wash: rgba(57,135,229,0.16);
+    --neutral: #6b6a66; --accent-wash: rgba(57,135,229,0.16); --critical-text: #f07070;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -60,7 +60,16 @@
   .filters label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
   .filters select { max-width: 260px; }
   .filters input[type=search] { min-width: 220px; flex: 1 1 220px; max-width: 380px; }
-  .tiles { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .tiles { display: grid; grid-template-columns: minmax(170px, 1.2fr) repeat(7, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-weight: 500; }
+  .pill .sw { width: 8px; height: 8px; border-radius: 50%; }
+  .owner { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+  .owner + .owner { margin-top: 2px; }
+  .st-bad { color: var(--critical-text); font-weight: 600; font-size: 12px; }
+  ul.findings { margin: 0; padding-left: 16px; }
+  ul.findings li + li { margin-top: 2px; }
+  .rbac-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .rbac-filters label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
   .tile { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
   button.tile:hover { background: var(--surface-2); }
   .tile[aria-pressed="true"] { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); background: var(--accent-wash); }
@@ -115,7 +124,7 @@
   details.data .table-scroll { margin-top: 8px; max-height: 300px; }
   footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
   footer p { margin: 4px 0; }
-  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
   @media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 640px) {
     .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -213,6 +222,41 @@
       <div class="more" id="resMore"></div>
     </section>
 
+    <section class="card hidden" id="ownCard">
+      <h2>Subscription owners</h2>
+      <p class="card-sub" id="ownSub">Owner role assignments made directly on each subscription (not inherited from a management group). A subscription is <strong>orphaned</strong> when none of its direct owners is an enabled person: an enabled user, or a group with an enabled member.</p>
+      <div class="table-scroll" style="max-height:480px"><table><thead><tr id="ownHead"></tr></thead><tbody id="ownBody"></tbody></table></div>
+    </section>
+
+    <section class="card hidden" id="rbacCard">
+      <div class="table-head">
+        <div><h2>Over-privileged role assignments</h2>
+          <p class="card-sub" id="rbacSub" style="margin:0">Privileged Azure roles checked against what each principal actually changed in the report period, plus assignments held by disabled, deleted or guest accounts.</p></div>
+        <div class="rbac-filters">
+          <span id="rbacChip"></span>
+          <label>Show <select id="fSev"><option value="flagged" selected>Flagged</option><option value="High">High only</option><option value="Medium">Medium and high</option><option value="priv">All privileged roles</option><option value="">All role assignments</option></select></label>
+          <label>Principal <select id="fPType"><option value="">Anyone</option><option value="User">Users</option><option value="Group">Groups</option><option value="app">Service principals &amp; managed identities</option></select></label>
+          <button type="button" id="btnRbacExport">Export these rows</button>
+        </div>
+      </div>
+      <div class="grid2" style="margin-bottom:12px">
+        <div>
+          <h2 style="font-size:14px">Findings</h2>
+          <p class="card-sub">Assignments with each finding (one assignment can have several). Click a bar to list them.</p>
+          <div class="chart" id="chFind"></div>
+          <details class="data"><summary>Show data</summary><div class="table-scroll" id="tbFind"></div></details>
+        </div>
+        <div>
+          <h2 style="font-size:14px">Severity</h2>
+          <p class="card-sub">High: disabled / deleted / guest holders and '*' custom roles at wide scope. Medium: unused or more than needed. Low: wider scope than used.</p>
+          <div class="chart" id="chSev"></div>
+          <details class="data"><summary>Show data</summary><div class="table-scroll" id="tbSev"></div></details>
+        </div>
+      </div>
+      <div class="table-scroll" style="max-height:640px"><table><thead><tr id="rbacHead"></tr></thead><tbody id="rbacBody"></tbody></table></div>
+      <div class="more" id="rbacMore"></div>
+    </section>
+
     <section class="card">
       <h2>Subscriptions</h2>
       <p class="card-sub">Coverage of the report. Subscriptions with errors may be missing changes.</p>
@@ -222,6 +266,7 @@
     <footer>
       <p>Changes come from each subscription's Activity Log (kept for 90 days). "Create" is identified from the resource's creation time or Resource Graph; "Create or update" means the resource has since been deleted so it can't be told. Changed properties come from Azure Resource Graph and cover the last 14 days only.</p>
       <p>"via" shows the tool a person used (e.g. Azure CLI, Azure Portal). Changes made inside an ARM / Bicep deployment show the deployment name.</p>
+      <p>Role assignment use is judged from Activity Log writes and deletes only. Reads and data-plane access (e.g. reading blobs or secrets) aren't logged there, so an assignment flagged as unused may still be used that way; check before removing. Active assignments only: PIM-eligible assignments aren't listed.</p>
     </footer>
   </main>
 </div>
@@ -242,7 +287,24 @@
   const seriesOf = (t) => t === 'Create' ? 'Create' : t === 'Delete' ? 'Delete' : (t === 'Update' || t === 'Create or update') ? 'Update' : null;
   const CT_COLOR = { Create: 'var(--c-create)', Update: 'var(--c-update)', 'Create or update': 'var(--c-update)', Delete: 'var(--c-delete)', Deployment: 'var(--neutral)', Action: 'var(--neutral)' };
 
-  let CHANGES = [], RESOURCES = [], SUBS = [], META = {};
+  let CHANGES = [], RESOURCES = [], SUBS = [], ROLES = [], META = {};
+  let rbacFocus = null, rbacPage = 200, rbacSort = { key: 'sev', dir: -1 }, viewRoles = [];
+  const SEV_RANK = { High: 3, Medium: 2, Low: 1, None: 0 };
+  const SEV_COLOR = { High: 'var(--critical)', Medium: 'var(--warning)', Low: 'var(--series-1)', None: 'var(--neutral)' };
+  const OWN_COLOR = { Orphaned: 'var(--critical)', 'No direct owner': 'var(--warning)', 'Has disabled owner(s)': 'var(--warning)', OK: 'var(--c-update)' };
+  // Finding text (from the script) -> short category
+  const FINDING_CATS = [
+    [/^Principal deleted/, 'Deleted principal'],
+    [/^Disabled /, 'Disabled account'],
+    [/^Guest user/, 'Guest with a privileged role'],
+    [/Custom role grants all actions/, "Custom role with '*'"],
+    [/assigned directly to a user/, 'Standing access for a user'],
+    [/at (management group|root) scope/, 'Management group / root scope'],
+    [/^No changes made/, 'Unused in the period'],
+    [/no access-control/, 'Owner-type role, no access changes'],
+    [/-wide role but changes only touched/, 'Wider scope than used'],
+  ];
+  const findingCat = (f) => { const m = FINDING_CATS.find(([re]) => re.test(f)); return m ? m[1] : f; };
   let focus = null, chgPage = 200, resPage = 200;
   let chgSort = { key: 'when', dir: -1 }, resSort = { key: 'created', dir: -1 };
   let viewChanges = [];
@@ -276,7 +338,7 @@
       alert('This does not look like a Get-AzureResourceChangeReport.ps1 CSV (missing RecordType / ChangeType columns).');
       return;
     }
-    CHANGES = []; RESOURCES = []; SUBS = [];
+    CHANGES = []; RESOURCES = []; SUBS = []; ROLES = []; rbacFocus = null;
     rows.forEach((r, i) => {
       if (r.RecordType === 'Change') CHANGES.push({ i, when: date(r.EventTime), sub: r.SubscriptionId, subName: r.SubscriptionName || r.SubscriptionId, rg: r.ResourceGroup,
         name: r.ResourceName, type: r.ResourceType, id: r.ResourceId, ct: r.ChangeType, op: r.Operation, opName: r.OperationName, status: r.Status,
@@ -285,10 +347,20 @@
       else if (r.RecordType === 'Resource') RESOURCES.push({ sub: r.SubscriptionId, subName: r.SubscriptionName || r.SubscriptionId, rg: r.ResourceGroup, name: r.ResourceName, type: r.ResourceType,
         id: r.ResourceId, location: r.Location, created: date(r.CreatedTime), createdBy: r.CreatedBy, createdSrc: r.CreatedBySource,
         changed: date(r.LastChangedTime), changedBy: r.LastChangedBy, n: +r.ChangesInPeriod || 0 });
-      else if (r.RecordType === 'Subscription') SUBS.push({ id: r.SubscriptionId, name: r.SubscriptionName, events: +r.Events || 0, resources: +r.Resources || 0, errors: r.Errors });
+      else if (r.RecordType === 'Subscription') SUBS.push({ id: r.SubscriptionId, name: r.SubscriptionName, events: +r.Events || 0, resources: +r.Resources || 0, errors: r.Errors,
+        owners: parseOwners(r.DirectOwners), inherited: parseOwners(r.InheritedOwners), ownStatus: r.OwnershipStatus || '', validOwners: +r.ValidDirectOwnerCount || 0 });
+      else if (r.RecordType === 'RoleAssignment') {
+        const findings = (r.Findings || '').split(';').map(x => x.trim()).filter(Boolean);
+        ROLES.push({ id: r.AssignmentId, sub: r.SubscriptionId, subName: r.SubscriptionName, rg: r.ResourceGroup, scope: r.Scope, scopeType: r.ScopeType,
+          role: r.RoleName, roleType: r.RoleType, priv: /true/i.test(r.RoleIsPrivileged), pid: r.PrincipalId, pname: r.PrincipalName || r.PrincipalId, ptype: r.PrincipalType || 'Unknown',
+          upn: r.PrincipalUpn, pstatus: r.PrincipalStatus, n: +r.ChangesInScope || 0, auth: +r.AuthorizationChanges || 0,
+          rgs: (r.ResourceGroupsChanged || '').split(';').map(x => x.trim()).filter(Boolean), providers: r.ProvidersTouched, last: date(r.LastChangeInScope),
+          findings, cats: [...new Set(findings.map(findingCat))], sev: r.Severity || 'None',
+          suggestions: (r.Suggestion || '').split(';').map(x => x.trim()).filter(Boolean), created: date(r.CreatedTime), raw: r });
+      }
     });
     const any = rows.find(r => r.ReportGeneratedUtc);
-    META = { source, generated: any ? date(any.ReportGeneratedUtc) : new Date(), start: any ? date(any.PeriodStartUtc) : null };
+    META = { source, generated: any ? date(any.ReportGeneratedUtc) : new Date(), start: any ? date(any.PeriodStartUtc) : null, hasRbac: 'OwnershipStatus' in rows[0] && (ROLES.length > 0 || SUBS.some(s => s.ownStatus)) };
     if (!META.start && CHANGES.length) META.start = new Date(Math.min(...CHANGES.map(c => +c.when)));
     const subSel = $('fSub'); subSel.replaceChildren(new Option('All subscriptions', ''));
     const subs = new Map(); SUBS.forEach(s => subs.set(s.id, s.name)); CHANGES.forEach(c => { if (!subs.has(c.sub)) subs.set(c.sub, c.subName); });
@@ -404,9 +476,16 @@
       { label: 'Changed by', value: callers.size, meta: `${people} people · ${callers.size - people} apps / identities` },
       { label: 'Subscriptions', value: SUBS.length || new Set(CHANGES.map(c => c.sub)).size, meta: errs ? `${errs} with errors - see below` : 'all read successfully', flag: errs > 0 },
     ];
+    if (META.hasRbac) {
+      const subs = subsInView(), orphan = subs.filter(x => x.ownStatus === 'Orphaned').length, noOwn = subs.filter(x => x.ownStatus === 'No direct owner').length, dis = subs.filter(x => x.ownStatus === 'Has disabled owner(s)').length;
+      const roles = rolesInView('flagged'), high = roles.filter(r => r.sev === 'High').length;
+      defs.push({ label: 'Orphaned subscriptions', value: orphan, color: 'var(--critical)', meta: `${noOwn} no direct owner · ${dis} with disabled owners`, scroll: 'ownCard' },
+        { label: 'Over-privileged roles', value: roles.length, color: 'var(--warning)', meta: `${high} high severity`, scroll: 'rbacCard' });
+    }
     defs.forEach(d => {
-      const b = el(d.f ? 'button' : 'div', 'tile' + (d.hero ? ' hero' : ''));
+      const b = el(d.f || d.scroll ? 'button' : 'div', 'tile' + (d.hero ? ' hero' : ''));
       if (d.f) { b.type = 'button'; b.setAttribute('aria-pressed', focus && focus.label === d.f.label ? 'true' : 'false'); b.addEventListener('click', () => setFocus(d.f)); }
+      else if (d.scroll) { b.type = 'button'; b.addEventListener('click', () => $(d.scroll).scrollIntoView({ behavior: 'smooth', block: 'start' })); }
       const l = el('span', 'label');
       if (d.color) { const s = el('span', 'sw'); s.style.background = d.color; l.append(s); }
       if (d.flag) { const s = el('span', 'sw'); s.style.cssText = 'background:var(--warning);border-radius:50%;width:8px;height:8px'; l.append(s); }
@@ -628,6 +707,155 @@
     });
   }
 
+  // ----------------------------------------------------- RBAC & owners ----
+  // "Name (Type, Status)" or "Name (Type, Status) at /scope" entries, '; ' separated
+  function parseOwners(s) {
+    return (s || '').split(/;\s*(?![^()]*\))/).map(x => x.trim()).filter(Boolean).map(x => {
+      const m = x.match(/^(.*) \(([^,()]+), ([^()]+)\)(?: at (.+))?$/);
+      return m ? { name: m[1], type: m[2], status: m[3], scope: m[4] || '' } : { name: x, type: '', status: '', scope: '' };
+    });
+  }
+  function subsInView() { const sub = $('fSub').value; return SUBS.filter(s => s.ownStatus && (!sub || s.id === sub)); }
+  function rolesInView(mode) {
+    const sub = $('fSub').value, pt = $('fPType').value, q = $('fSearch').value.trim().toLowerCase();
+    return ROLES.filter(r => {
+      if (sub && r.sub && r.sub !== sub) return false;
+      if (mode === 'flagged' && r.sev === 'None') return false;
+      if (mode === 'High' && r.sev !== 'High') return false;
+      if (mode === 'Medium' && SEV_RANK[r.sev] < 2) return false;
+      if (mode === 'priv' && !r.priv) return false;
+      if (pt === 'app' ? !isApp(r.ptype) : pt && r.ptype !== pt) return false;
+      if (q && !`${r.pname} ${r.upn} ${r.role} ${r.scope} ${r.rg}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+  function pill(text, color) { const p = el('span', 'pill'); const d = el('span', 'sw'); d.style.background = color; p.append(d, document.createTextNode(text)); return p; }
+  const scopeLabel = (r) => r.scopeType === 'Subscription' ? r.subName || r.scope : r.scopeType === 'Resource group' ? r.rg : r.scopeType === 'Resource' ? r.scope.split('/').pop() : r.scopeType === 'Root' ? 'Tenant root' : r.scope.split('/').pop();
+
+  function renderOwners() {
+    $('ownCard').classList.toggle('hidden', !META.hasRbac);
+    if (!META.hasRbac) return;
+    const order = { Orphaned: 0, 'No direct owner': 1, 'Has disabled owner(s)': 2, OK: 3 };
+    const subs = subsInView().sort((a, b) => (order[a.ownStatus] ?? 4) - (order[b.ownStatus] ?? 4) || String(a.name).localeCompare(String(b.name)));
+    const c = (k) => subs.filter(x => x.ownStatus === k).length;
+    $('ownSub').replaceChildren(document.createTextNode(`${fmtInt.format(c('Orphaned'))} orphaned, ${fmtInt.format(c('No direct owner'))} with no direct owner (owned only through a management group), ${fmtInt.format(c('Has disabled owner(s)'))} with a disabled or deleted owner. A subscription is orphaned when none of its direct owners is an enabled person (an enabled user, or a group with an enabled member).`));
+    $('ownHead').replaceChildren(...['Subscription', 'Ownership', 'Direct owners', 'Inherited owners (management group / root)'].map(h => el('th', '', h)));
+    const body = $('ownBody'); body.replaceChildren();
+    const ownerLine = (o, withScope) => {
+      const d = el('div', 'owner'); d.append(el('span', '', o.name));
+      d.append(el('span', 'muted small', o.type + (withScope && o.scope ? ` · ${o.scope.split('/').pop()}` : '')));
+      if (o.status && o.status !== 'Enabled') d.append(el('span', 'st-bad', o.status));
+      return d;
+    };
+    subs.forEach(s => {
+      const tr = el('tr');
+      const n = el('td'); n.append(el('div', '', s.name || s.id), el('div', 'muted small', s.id)); tr.append(n);
+      const st = el('td', 'nowrap'); st.append(pill(s.ownStatus, OWN_COLOR[s.ownStatus] || 'var(--neutral)'));
+      st.append(el('div', 'muted small', `${s.validOwners} of ${s.owners.length} valid`)); tr.append(st);
+      const o = el('td', 'wide'); o.style.maxWidth = '420px';
+      if (s.owners.length) s.owners.forEach(x => o.append(ownerLine(x, false))); else o.append(el('span', 'muted', 'None'));
+      const inh = el('td', 'wide'); inh.style.maxWidth = '420px';
+      if (s.inherited.length) s.inherited.forEach(x => inh.append(ownerLine(x, true))); else inh.append(el('span', 'muted', 'None'));
+      tr.append(o, inh); body.append(tr);
+    });
+    if (!subs.length) { const tr = el('tr'); const td = el('td', 'muted', 'No subscriptions.'); td.colSpan = 4; tr.append(td); body.append(tr); }
+  }
+
+  function simpleBars(host, tableHost, items, colorFn, onClick, isFocused, unit) {
+    if (!items.length) { host.replaceChildren(el('p', 'muted', 'Nothing to show.')); tableHost.replaceChildren(); return; }
+    const W = Math.max(260, host.clientWidth), labelW = Math.min(230, W * 0.5), barH = 16, gap = 10;
+    const H = items.length * (barH + gap), plotW = W - labelW - 44, max = Math.max(1, ...items.map(i => i.n));
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': items.map(i => `${i.label} ${i.n}`).join(', ') });
+    svgEl('line', { x1: labelW, x2: labelW, y1: 0, y2: H - gap + 2, stroke: 'var(--axis)' }, svg);
+    const anyF = items.some(isFocused);
+    items.forEach((it, i) => {
+      const y = i * (barH + gap);
+      const g = svgEl('g', { class: 'hit', 'aria-label': `${it.label}: ${it.n} ${unit}` }, svg);
+      if (anyF && !isFocused(it)) g.setAttribute('opacity', '0.4');
+      svgEl('rect', { x: 0, y: y - gap / 2, width: W, height: barH + gap, fill: 'transparent' }, g);
+      svgEl('text', { x: labelW - 8, y: y + barH / 2 + 4, 'text-anchor': 'end', 'font-size': 12, fill: 'var(--ink-2)' }, g).textContent = truncate(it.label, Math.floor((labelW - 10) / 6.3));
+      const w = Math.max(1, plotW * it.n / max), x = labelW + 1, r = Math.min(4, barH / 2, w);
+      svgEl('path', { d: `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + barH - r}Q${x + w},${y + barH} ${x + w - r},${y + barH}H${x}Z`, fill: colorFn(it), class: 'mark' }, g);
+      svgEl('text', { x: x + w + 6, y: y + barH / 2 + 4, 'font-size': 12, 'font-weight': 600, fill: 'var(--ink)' }, g).textContent = fmtInt.format(it.n);
+      tipOn(g, (e) => showTip(e, `${fmtInt.format(it.n)} ${unit}`, it.label, 'click to list'));
+      clickable(g, () => onClick(it));
+    });
+    host.replaceChildren(svg);
+    const tw = el('div'); dataTable(tw, ['Name', unit[0].toUpperCase() + unit.slice(1)], items.map(it => [it.label, fmtInt.format(it.n)]));
+    tableHost.replaceChildren(tw.firstChild);
+  }
+
+  function setRbacFocus(f) {
+    const same = rbacFocus && f && rbacFocus.kind === f.kind && rbacFocus.value === f.value;
+    rbacFocus = same ? null : f; rbacPage = 200; renderRbac();
+  }
+  function renderRbac() {
+    $('rbacCard').classList.toggle('hidden', !META.hasRbac);
+    if (!META.hasRbac) return;
+    const mode = $('fSev').value;
+    const base = rolesInView(mode);
+    // Charts reflect the filters; the table also follows the chart focus
+    const cats = new Map(); base.forEach(r => r.cats.forEach(c => cats.set(c, (cats.get(c) || 0) + 1)));
+    const catItems = [...cats.entries()].map(([label, n]) => ({ label, n })).sort((a, b) => b.n - a.n);
+    simpleBars($('chFind'), $('tbFind'), catItems, () => 'var(--series-1)', it => setRbacFocus({ kind: 'cat', value: it.label }), it => rbacFocus && rbacFocus.kind === 'cat' && rbacFocus.value === it.label, 'assignments');
+    const sevItems = ['High', 'Medium', 'Low', 'None'].map(k => ({ label: k === 'None' ? 'No finding' : k, key: k, n: base.filter(r => r.sev === k).length })).filter(x => x.n);
+    simpleBars($('chSev'), $('tbSev'), sevItems, it => SEV_COLOR[it.key], it => setRbacFocus({ kind: 'sev', value: it.key }), it => rbacFocus && rbacFocus.kind === 'sev' && rbacFocus.value === it.key, 'assignments');
+    const rows = base.filter(r => !rbacFocus || (rbacFocus.kind === 'cat' ? r.cats.includes(rbacFocus.value) : r.sev === rbacFocus.value));
+    viewRoles = rows;
+    const chip = $('rbacChip'); chip.replaceChildren();
+    if (rbacFocus) {
+      const c = el('span', 'focus-chip'); c.append(el('span', '', rbacFocus.kind === 'cat' ? rbacFocus.value : `${rbacFocus.value} severity`));
+      const x = el('button', '', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Clear'); x.addEventListener('click', () => setRbacFocus(null)); c.append(x); chip.append(c);
+    }
+    const all = rolesInView(''), flagged = all.filter(r => r.sev !== 'None');
+    $('rbacSub').textContent = `${fmtInt.format(rows.length)} shown · ${fmtInt.format(flagged.length)} of ${fmtInt.format(all.length)} role assignments flagged (${fmtInt.format(flagged.filter(r => r.sev === 'High').length)} high). Use is judged from Activity Log changes in the report period.`;
+    const cols = [
+      { key: 'sev', label: 'Severity', get: r => SEV_RANK[r.sev] * 10 + (r.priv ? 1 : 0) },
+      { key: 'role', label: 'Role', get: r => r.role.toLowerCase() },
+      { key: 'who', label: 'Assigned to', get: r => r.pname.toLowerCase() },
+      { key: 'scope', label: 'Scope', get: r => `${r.scopeType} ${scopeLabel(r)}`.toLowerCase() },
+      { key: 'use', label: 'Changes in scope', get: r => r.n, desc: true },
+      { key: 'find', label: 'Findings and suggestion', get: r => r.findings.length },
+    ];
+    sortHeader($('rbacHead'), cols, rbacSort, renderRbac);
+    const body = $('rbacBody'); body.replaceChildren();
+    const sorted = sortBy(rows, cols, rbacSort), frag = document.createDocumentFragment();
+    sorted.slice(0, rbacPage).forEach(r => {
+      const tr = el('tr');
+      tr.append(el('td', 'nowrap')); tr.lastChild.append(pill(r.sev === 'None' ? 'None' : r.sev, SEV_COLOR[r.sev]));
+      const role = el('td', 'wide'); role.append(el('div', '', r.role));
+      const tags = el('div'); if (r.priv) tags.append(el('span', 'tag', 'Privileged')); if (r.roleType === 'Custom') tags.append(el('span', 'tag', 'Custom')); role.append(tags); tr.append(role);
+      const who = el('td', 'wide'); const wn = el('div', 'owner'); wn.append(el('span', '', r.pname)); if (r.pstatus && r.pstatus !== 'Enabled') wn.append(el('span', 'st-bad', r.pstatus));
+      who.append(wn, el('div', 'muted small', [r.ptype, r.upn].filter(Boolean).join(' · '))); tr.append(who);
+      const sc = el('td', 'wide'); sc.append(el('div', '', scopeLabel(r)), el('div', 'muted small', r.scopeType + (r.scopeType === 'Resource group' && r.subName ? ` · ${r.subName}` : ''))); sc.title = r.scope; tr.append(sc);
+      const use = el('td', 'wide');
+      if (r.n) {
+        use.append(el('div', '', `${fmtInt.format(r.n)} change${r.n === 1 ? '' : 's'}${r.auth ? ` · ${fmtInt.format(r.auth)} access` : ''}`));
+        use.append(el('div', 'muted small', [r.rgs.length ? `${r.rgs.length} resource group${r.rgs.length === 1 ? '' : 's'}: ${r.rgs.slice(0, 4).map(x => x.split('/').pop()).join(', ')}${r.rgs.length > 4 ? '…' : ''}` : '', r.last ? `last ${fmtD(r.last)}` : ''].filter(Boolean).join(' · ')));
+      } else use.append(el('span', 'muted', 'None'));
+      tr.append(use);
+      const f = el('td', 'wide'); f.style.maxWidth = '420px';
+      if (r.findings.length) { const ul = el('ul', 'findings'); r.findings.forEach(x => ul.append(el('li', '', x))); f.append(ul); }
+      if (r.suggestions.length) f.append(el('div', 'muted small', '→ ' + r.suggestions.join('. ')));
+      if (!r.findings.length) f.append(el('span', 'muted', '—'));
+      tr.append(f);
+      frag.append(tr);
+    });
+    body.append(frag);
+    if (!sorted.length) { const tr = el('tr'); const td = el('td', 'muted', mode === 'flagged' ? 'No flagged role assignments.' : 'No role assignments match.'); td.colSpan = cols.length; tr.append(td); body.append(tr); }
+    const more = $('rbacMore'); more.replaceChildren();
+    if (sorted.length > rbacPage) { more.append(el('span', '', `Showing ${fmtInt.format(rbacPage)} of ${fmtInt.format(sorted.length)}`)); const b = el('button', '', 'Show more'); b.type = 'button'; b.addEventListener('click', () => { rbacPage += 500; renderRbac(); }); more.append(b); }
+  }
+  function exportRoles() {
+    if (!viewRoles.length) return;
+    const cols = ['Severity', 'RoleName', 'RoleType', 'RoleIsPrivileged', 'PrincipalName', 'PrincipalUpn', 'PrincipalType', 'PrincipalStatus', 'PrincipalId', 'ScopeType', 'Scope', 'SubscriptionName', 'ChangesInScope', 'AuthorizationChanges', 'ResourceGroupsChanged', 'ProvidersTouched', 'LastChangeInScope', 'Findings', 'Suggestion', 'AssignmentId'];
+    const esc = (v) => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    const lines = [cols.join(',')]; viewRoles.forEach(r => lines.push(cols.map(k => esc(String(r.raw[k] ?? ''))).join(',')));
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'azure-role-assignments.csv'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
   function renderBanners() {
     const b = $('banners'); b.replaceChildren();
     const errs = SUBS.filter(s => s.errors);
@@ -645,7 +873,7 @@
       it => setFocus({ kind: 'type', value: it.label, label: `Changes to ${shortType(it.label)}` }), it => focus && focus.kind === 'type' && focus.value === it.label, it => shortType(it.label));
     // the resource history view shows every change type for that resource
     renderChanges(focus && (focus.kind === 'resource' || focus.kind === 'deployment') ? scopedChanges(true) : ch);
-    renderResources(); renderSubs();
+    renderResources(); renderOwners(); renderRbac(); renderSubs();
   }
 
   function exportRows() {
@@ -689,7 +917,10 @@
       const created = now - (40 + rnd() * 900) * DAY;
       res.push({ id: `/subscriptions/${s[1]}/resourceGroups/${rg}/providers/${type}/${pre}-${rg.slice(3)}-${i}`, name: `${pre}-${rg.slice(3)}-${i}`, type, sub: s, rg, created, exists: true, tagBy: rnd() < 0.25 ? pick(people)[1] : '' });
     }
-    const head = ['RecordType', 'EventTime', 'SubscriptionId', 'SubscriptionName', 'ResourceGroup', 'ResourceName', 'ResourceType', 'ResourceId', 'Location', 'ChangeType', 'Operation', 'OperationName', 'Status', 'Caller', 'CallerName', 'CallerType', 'CallerApp', 'ClientIp', 'Deployment', 'CorrelationId', 'ChangedProperties', 'ResourceExists', 'CreatedTime', 'CreatedBy', 'CreatedBySource', 'LastChangedTime', 'LastChangedBy', 'ChangesInPeriod', 'Events', 'Resources', 'Errors', 'PeriodStartUtc', 'ReportGeneratedUtc'];
+    const head = ['RecordType', 'EventTime', 'SubscriptionId', 'SubscriptionName', 'ResourceGroup', 'ResourceName', 'ResourceType', 'ResourceId', 'Location', 'ChangeType', 'Operation', 'OperationName', 'Status', 'Caller', 'CallerName', 'CallerType', 'CallerApp', 'ClientIp', 'Deployment', 'CorrelationId', 'ChangedProperties', 'ResourceExists', 'CreatedTime', 'CreatedBy', 'CreatedBySource', 'LastChangedTime', 'LastChangedBy', 'ChangesInPeriod', 'Events', 'Resources', 'Errors',
+      'DirectOwners', 'DirectOwnerCount', 'ValidDirectOwnerCount', 'OwnershipStatus', 'InheritedOwners', 'AssignmentId', 'Scope', 'ScopeType', 'RoleName', 'RoleType', 'RoleIsPrivileged',
+      'PrincipalId', 'PrincipalName', 'PrincipalType', 'PrincipalUpn', 'PrincipalStatus', 'ChangesInScope', 'AuthorizationChanges', 'ResourceGroupsChanged', 'ProvidersTouched', 'LastChangeInScope',
+      'Findings', 'Severity', 'Suggestion', 'PeriodStartUtc', 'ReportGeneratedUtc'];
     const rows = []; const common = { PeriodStartUtc: iso(start), ReportGeneratedUtc: iso(now) };
     const row = (o) => rows.push(head.map(h => o[h] ?? common[h] ?? ''));
     const changes = [];
@@ -727,8 +958,52 @@
         CreatedTime: iso(r.created), CreatedBy: cr ? cr.w.name : r.tagBy || '', CreatedBySource: cr ? 'Activity Log' : r.tagBy ? "Tag 'CreatedBy'" : 'Before report period',
         LastChangedTime: last ? iso(last.t) : iso(r.created), LastChangedBy: last ? last.w.name : '', ChangesInPeriod: hist.length });
     });
+    // Subscription owners
+    const mgOwners = 'Platform Engineering (Group, Enabled) at /providers/Microsoft.Management/managementGroups/mg-landingzones; Frank Old (User, Disabled) at /providers/Microsoft.Management/managementGroups/mg-landingzones';
+    const own = {
+      'Prod - Platform': ['Alice Morgan (User, Enabled); Platform Owners (Group, Enabled)', 2, 2, 'OK'],
+      'Prod - Applications': ['Dave Wilson (User, Enabled); Gary Leaver (User, Disabled)', 2, 1, 'Has disabled owner(s)'],
+      'Dev / Test': ['Gary Leaver (User, Disabled); Terraform Pipeline (Service principal, Enabled)', 2, 0, 'Orphaned'],
+      'Sandbox': ['', 0, 0, 'No direct owner'],
+      'Connectivity': ['Helen Former (User, Disabled); 3c1f0a2e-77d1-4c55-9a41-0f7d2a9b51c2 (User, Deleted)', 2, 0, 'Orphaned'],
+    };
     subs.forEach(s => row({ RecordType: 'Subscription', SubscriptionId: s[1], SubscriptionName: s[0], Events: changes.filter(c => c.r.sub === s).length, Resources: res.filter(r => r.sub === s && r.exists).length,
-      Errors: s[0] === 'Connectivity' ? 'Activity Log 2026-10-09T09:00:00Z: HTTP 403 : The client does not have authorization to perform action Microsoft.Insights/eventtypes/values/read' : '' }));
+      Errors: s[0] === 'Connectivity' ? 'Activity Log 2026-10-09T09:00:00Z: HTTP 403 : The client does not have authorization to perform action Microsoft.Insights/eventtypes/values/read' : '',
+      DirectOwners: own[s[0]][0], DirectOwnerCount: own[s[0]][1], ValidDirectOwnerCount: own[s[0]][2], OwnershipStatus: own[s[0]][3], InheritedOwners: mgOwners }));
+    // Role assignments: [sub index | -1 for MG, rg, role, roleType, priv, principal, type, upn, status, changes, auth, rgs, findings, severity, suggestion]
+    const S = (i) => subs[i];
+    const mg = '/providers/Microsoft.Management/managementGroups/mg-landingzones';
+    const RA = [
+      [-1, '', 'Owner', 'Built-in', true, 'Platform Engineering', 'Group', '', 'Enabled', 41, 3, 'Prod - Platform/rg-shared; Connectivity/rg-network-hub; Prod - Applications/rg-web-prod', ['Privileged role at management group scope (inherited by every subscription below)'], 'Low', 'Assign at the subscriptions / resource groups that need it'],
+      [-1, '', 'Owner', 'Built-in', true, 'Frank Old', 'User', 'frank.old@contoso.com', 'Disabled', 0, 0, '', ['Disabled user holds the role'], 'High', 'Remove the assignment: re-enabling the account would restore the access'],
+      [0, '', 'Owner', 'Built-in', true, 'Alice Morgan', 'User', 'alice.morgan@contoso.com', 'Enabled', 18, 0, 'Prod - Platform/rg-shared; Prod - Platform/rg-identity', ['Owner assigned directly to a user at subscription scope', 'Owner but no access-control (Microsoft.Authorization) changes made', 'Subscription-wide role but changes only touched 2 resource group(s)'], 'Medium', 'Assign through a group and make it PIM-eligible rather than standing access; Contributor (or a narrower role) covers the changes made; Scope to resource group(s): rg-identity, rg-shared'],
+      [0, '', 'Owner', 'Built-in', true, 'Platform Owners', 'Group', '', 'Enabled', 9, 2, 'Prod - Platform/rg-shared', [], 'None', ''],
+      [1, '', 'Owner', 'Built-in', true, 'Dave Wilson', 'User', 'dave.wilson@contoso.com', 'Enabled', 0, 0, '', ['Owner assigned directly to a user at subscription scope', 'No changes made in scope in the last 30 days'], 'Medium', "Assign through a group and make it PIM-eligible rather than standing access; Remove, or make PIM-eligible; if it's used for data-plane or read access, a Reader / data role will do"],
+      [1, '', 'Owner', 'Built-in', true, 'Gary Leaver', 'User', 'gary.leaver@contoso.com', 'Disabled', 0, 0, '', ['Disabled user holds the role'], 'High', 'Remove the assignment: re-enabling the account would restore the access'],
+      [1, '', 'Contributor', 'Built-in', true, 'Azure DevOps - apps', 'Service principal', '', 'Enabled', 64, 0, 'Prod - Applications/rg-web-prod', ['Subscription-wide role but changes only touched 1 resource group(s)'], 'Low', 'Scope to resource group(s): rg-web-prod'],
+      [1, 'rg-data-prod', 'Contributor', 'Built-in', true, 'Bob Patel', 'User', 'bob.patel@contoso.com', 'Enabled', 0, 0, '', ['No changes made in scope in the last 30 days'], 'Medium', "Remove, or make PIM-eligible; if it's used for data-plane or read access, a Reader / data role will do"],
+      [1, 'rg-web-prod', 'Website Contributor', 'Built-in', false, 'Carol Nguyen', 'User', 'carol.nguyen@contoso.com', 'Enabled', 12, 0, 'Prod - Applications/rg-web-prod', [], 'None', ''],
+      [2, '', 'Owner', 'Built-in', true, 'Gary Leaver', 'User', 'gary.leaver@contoso.com', 'Disabled', 0, 0, '', ['Disabled user holds the role'], 'High', 'Remove the assignment: re-enabling the account would restore the access'],
+      [2, '', 'Owner', 'Built-in', true, 'Terraform Pipeline', 'Service principal', '', 'Enabled', 37, 4, 'Dev / Test/rg-aks-dev', ['Subscription-wide role but changes only touched 1 resource group(s)'], 'Low', 'Scope to resource group(s): rg-aks-dev'],
+      [2, '', 'DevOps Everything', 'Custom', true, 'Vendor Vic', 'User', 'vic_vendor.com#EXT#@contoso.com', 'Enabled', 2, 0, 'Dev / Test/rg-aks-dev', ["Guest user with a privileged role", "Custom role grants all actions ('*')", 'DevOps Everything assigned directly to a user at subscription scope'], 'High', "Use a member account, or a narrower role; Replace with a role listing only the actions needed; Assign through a group and make it PIM-eligible rather than standing access"],
+      [2, '', 'Reader', 'Built-in', false, '7d9e2b14-0c3a-4f6e-8b1d-5a2c9e7f3b60', 'User', '', 'Deleted', 0, 0, '', ['Principal deleted'], 'Medium', 'Remove the assignment: the identity no longer exists'],
+      [3, 'rg-sandbox-alice', 'Owner', 'Built-in', true, 'Alice Morgan', 'User', 'alice.morgan@contoso.com', 'Enabled', 6, 1, 'Sandbox/rg-sandbox-alice', [], 'None', ''],
+      [3, '', 'User Access Administrator', 'Built-in', true, 'Erin Brooks', 'User', 'erin.brooks@contoso.com', 'Enabled', 14, 0, 'Sandbox/rg-sandbox-alice', ['User Access Administrator assigned directly to a user at subscription scope', 'User Access Administrator but no access-control (Microsoft.Authorization) changes made'], 'Medium', 'Assign through a group and make it PIM-eligible rather than standing access; Contributor (or a narrower role) covers the changes made'],
+      [4, '', 'Owner', 'Built-in', true, 'Helen Former', 'User', 'helen.former@contoso.com', 'Disabled', 0, 0, '', ['Disabled user holds the role'], 'High', 'Remove the assignment: re-enabling the account would restore the access'],
+      [4, '', 'Owner', 'Built-in', true, '3c1f0a2e-77d1-4c55-9a41-0f7d2a9b51c2', 'User', '', 'Deleted', 0, 0, '', ['Principal deleted'], 'High', 'Remove the assignment: the identity no longer exists'],
+      [4, 'rg-network-hub', 'Network Contributor', 'Built-in', false, 'mi-automation', 'Managed identity', '', 'Enabled', 8, 0, 'Connectivity/rg-network-hub', [], 'None', ''],
+      [0, '', 'Reader', 'Built-in', false, 'Security Reviewers', 'Group', '', 'Enabled', 0, 0, '', [], 'None', ''],
+      [0, '', 'Role Based Access Control Administrator', 'Built-in', true, 'GitHub Actions - infra', 'Service principal', '', 'Enabled', 0, 0, '', ['No changes made in scope in the last 30 days'], 'Medium', "Remove, or make PIM-eligible; if it's used for data-plane or read access, a Reader / data role will do"],
+    ];
+    RA.forEach((a, i) => {
+      const s = a[0] >= 0 ? S(a[0]) : null;
+      const scope = !s ? mg : `/subscriptions/${s[1]}` + (a[1] ? `/resourceGroups/${a[1]}` : '');
+      const scopeType = !s ? 'Management group' : a[1] ? 'Resource group' : 'Subscription';
+      row({ RecordType: 'RoleAssignment', SubscriptionId: s ? s[1] : '', SubscriptionName: s ? s[0] : '', ResourceGroup: a[1], AssignmentId: `${scope}/providers/Microsoft.Authorization/roleAssignments/${guid()}`,
+        Scope: scope, ScopeType: scopeType, RoleName: a[2], RoleType: a[3], RoleIsPrivileged: a[4] ? 'True' : 'False', PrincipalId: guid(), PrincipalName: a[5], PrincipalType: a[6], PrincipalUpn: a[7], PrincipalStatus: a[8],
+        ChangesInScope: a[9], AuthorizationChanges: a[10], ResourceGroupsChanged: a[11], ProvidersTouched: a[9] ? 'Microsoft.Compute; Microsoft.Network' : '', LastChangeInScope: a[9] ? iso(now - (1 + i % 9) * DAY) : '',
+        Findings: a[12].join('; '), Severity: a[13], Suggestion: a[14], CreatedTime: iso(now - (100 + i * 37) * DAY) });
+    });
     const esc = (v) => { v = String(v); return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
     return [head, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
   }
@@ -739,6 +1014,8 @@
   $('file').addEventListener('change', e => { readFile(e.target.files[0]); e.target.value = ''; });
   $('btnSample').addEventListener('click', () => load(sampleCsv(), 'Sample data'));
   $('btnExport').addEventListener('click', exportRows);
+  $('btnRbacExport').addEventListener('click', exportRoles);
+  ['fSev', 'fPType'].forEach(id => $(id).addEventListener('change', () => { rbacPage = 200; rbacFocus = null; renderRbac(); renderTiles(scopedChanges(false)); }));
   ['fSub', 'fDays', 'fCaller', 'fType'].forEach(id => $(id).addEventListener('change', () => { chgPage = 200; resPage = 200; render(); }));
   $('fRes').addEventListener('change', () => { resPage = 200; renderResources(); });
   let st; $('fSearch').addEventListener('input', () => { clearTimeout(st); st = setTimeout(render, 200); });

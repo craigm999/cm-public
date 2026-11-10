@@ -61,6 +61,20 @@
     are also matched. An app registration is marked when its service principal is, so
     use -Type All (the default) for the most complete detection.
 
+.PARAMETER CredentialWarningDays
+    Credentials expiring within this many days are flagged 'Expiring soon'. Default 30.
+
+.PARAMETER RecentUserCount
+    How many of the most recent distinct users to list per app. Default 5.
+
+.PARAMETER RecentSignInDays
+    How far back to look in the sign-in logs for recent users (max 30, the log retention
+    on P1/P2). Default 30. Only apps the sign-in activity report shows had delegated (user)
+    sign-ins in this period are queried, to keep the number of log queries down.
+
+.PARAMETER SkipRecentUsers
+    Don't query the sign-in logs for recent users (faster for very large tenants).
+
 .PARAMETER OutputPath
     Optional path to export the results to CSV.
 
@@ -94,6 +108,14 @@ param(
     [switch]$IncludeManagedIdentities,
 
     [switch]$ExcludeCopilotStudio,
+
+    [ValidateRange(1, 365)][int]$CredentialWarningDays = 30,
+
+    [ValidateRange(1, 50)][int]$RecentUserCount = 5,
+
+    [ValidateRange(1, 30)][int]$RecentSignInDays = 30,
+
+    [switch]$SkipRecentUsers,
 
     [string]$OutputPath
 )
@@ -252,6 +274,90 @@ function Get-SignInSummary {
 
 #endregion
 
+function Get-CredentialSummary {
+    <# Client secrets (passwordCredentials) and certificates (keyCredentials) on an app or service principal. #>
+    param($Object)
+    $now = [datetime]::UtcNow
+    $creds = @(
+        @(Get-Prop $Object 'passwordCredentials') | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ Kind = 'Secret'; Name = [string](Get-Prop $_ 'displayName'); KeyId = [string](Get-Prop $_ 'keyId'); End = (ConvertTo-UtcDate (Get-Prop $_ 'endDateTime')) } }
+        @(Get-Prop $Object 'keyCredentials') | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ Kind = 'Certificate'; Name = [string](Get-Prop $_ 'displayName'); KeyId = [string](Get-Prop $_ 'keyId'); End = (ConvertTo-UtcDate (Get-Prop $_ 'endDateTime')) } }
+    )
+    $valid = @($creds | Where-Object { -not $_.End -or $_.End -gt $now } | Sort-Object End)
+    $expired = @($creds | Where-Object { $_.End -and $_.End -le $now })
+    $next = $valid | Where-Object { $_.End } | Select-Object -First 1
+    $status = if (-not $creds.Count) { 'No credentials' }
+        elseif (-not $valid.Count) { 'All expired' }
+        elseif ($next -and $next.End -le $now.AddDays($CredentialWarningDays)) { 'Expiring soon' }
+        else { 'OK' }
+    $describe = { param($c)
+        $label = if ($c.Name) { "'$($c.Name)'" } else { "(no name, $($c.KeyId.Substring(0, [math]::Min(8, $c.KeyId.Length))))" }
+        $when = if ($c.End) { $c.End.ToString('yyyy-MM-dd') } else { 'no expiry' }
+        "$($c.Kind) $label expires $when$(if ($c.End -and $c.End -le $now) { ' [expired]' })"
+    }
+    return [ordered]@{
+        CredentialCount        = $creds.Count
+        SecretCount            = @($creds | Where-Object Kind -eq 'Secret').Count
+        CertificateCount       = @($creds | Where-Object Kind -eq 'Certificate').Count
+        ExpiredCredentialCount = $expired.Count
+        NextCredentialExpiry   = $(if ($next) { $next.End } else { $null })
+        CredentialStatus       = $status
+        Credentials            = (@($creds | Sort-Object End | ForEach-Object { & $describe $_ }) -join '; ')
+    }
+}
+
+function Get-RecentUsers {
+    <#
+        The most recent distinct users who signed in successfully to an app (as the client, or
+        to it as a resource), interactive or non-interactive, from the sign-in logs.
+        Returns @{ Users = @(...); Note = '...' }.
+    #>
+    param([string]$AppId, [ValidateSet('appId', 'resourceId')][string]$Field)
+    $since = [datetime]::UtcNow.AddDays(-$RecentSignInDays).ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $select = 'createdDateTime,userId,userPrincipalName,userDisplayName,signInEventTypes,isInteractive,status,authenticationRequirement'
+    $filter = "$Field eq '$AppId' and createdDateTime ge $since and signInEventTypes/any(t: t eq 'interactiveUser' or t eq 'nonInteractiveUser')"
+    $uri = "https://graph.microsoft.com/beta/auditLogs/signIns?`$filter=$([uri]::EscapeDataString($filter))&`$select=$select&`$top=100"
+    $note = ''
+    $users = [ordered]@{}
+    $pages = 0
+    try {
+        $next = $uri
+        while ($next -and $users.Count -lt $RecentUserCount -and $pages -lt 10) {
+            $pages++
+            $resp = Invoke-MgGraphRequest -Method GET -Uri $next -OutputType Hashtable
+            foreach ($e in @($resp['value'])) {
+                if ([int](Get-Prop (Get-Prop $e 'status') 'errorCode') -ne 0) { continue }   # successful sign-ins only
+                $uid = [string](Get-Prop $e 'userId'); if (-not $uid -or $users.Contains($uid)) { continue }
+                $types = @(Get-Prop $e 'signInEventTypes')
+                $users[$uid] = [pscustomobject]@{
+                    Name = [string](Get-Prop $e 'userDisplayName'); Upn = [string](Get-Prop $e 'userPrincipalName')
+                    When = ConvertTo-UtcDate (Get-Prop $e 'createdDateTime')
+                    Type = $(if ($types -contains 'interactiveUser' -or (Get-Prop $e 'isInteractive')) { 'interactive' } else { 'non-interactive' })
+                    Auth = $(if ((Get-Prop $e 'authenticationRequirement') -eq 'multiFactorAuthentication') { 'MFA' } else { 'single-factor' })
+                }
+                if ($users.Count -ge $RecentUserCount) { break }
+            }
+            $next = if ($resp.ContainsKey('@odata.nextLink')) { $resp['@odata.nextLink'] } else { $null }
+        }
+    }
+    catch {
+        # Fall back to v1.0, which only returns interactive sign-ins
+        $note = 'interactive sign-ins only (beta sign-in log query failed)'
+        $users = [ordered]@{}
+        try {
+            $f = "$Field eq '$AppId' and createdDateTime ge $since"
+            $resp = Invoke-MgGraphRequest -Method GET -OutputType Hashtable -Uri "https://graph.microsoft.com/v1.0/auditLogs/signIns?`$filter=$([uri]::EscapeDataString($f))&`$top=100"
+            foreach ($e in @($resp['value'])) {
+                if ([int](Get-Prop (Get-Prop $e 'status') 'errorCode') -ne 0) { continue }
+                $uid = [string](Get-Prop $e 'userId'); if (-not $uid -or $users.Contains($uid)) { continue }
+                $users[$uid] = [pscustomobject]@{ Name = [string](Get-Prop $e 'userDisplayName'); Upn = [string](Get-Prop $e 'userPrincipalName')
+                    When = ConvertTo-UtcDate (Get-Prop $e 'createdDateTime'); Type = 'interactive'; Auth = '' }
+                if ($users.Count -ge $RecentUserCount) { break }
+            }
+        } catch { $note = "sign-in logs unavailable: $($_.Exception.Message)" }
+    }
+    return @{ Users = @($users.Values); Note = $note }
+}
+
 #region Connect ---------------------------------------------------------------
 
 if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
@@ -399,7 +505,7 @@ function New-ResultRow {
 
 if ($Type -in 'All', 'AppRegistrations') {
     Write-Host 'Retrieving app registrations...' -ForegroundColor Cyan
-    $select = 'id,appId,displayName,createdDateTime,signInAudience,publisherDomain,tags'
+    $select = 'id,appId,displayName,createdDateTime,signInAudience,publisherDomain,tags,passwordCredentials,keyCredentials'
     $uri = "https://graph.microsoft.com/v1.0/applications?`$select=$select&`$expand=owners&`$top=100"
     $count = 0
     foreach ($app in Invoke-GraphPaged -Uri $uri) {
@@ -423,7 +529,7 @@ if ($Type -in 'All', 'AppRegistrations') {
 
 if ($Type -in 'All', 'EnterpriseApps') {
     Write-Host 'Retrieving enterprise applications (service principals)...' -ForegroundColor Cyan
-    $select = 'id,appId,displayName,createdDateTime,servicePrincipalType,accountEnabled,appOwnerOrganizationId,signInAudience,tags'
+    $select = 'id,appId,displayName,createdDateTime,servicePrincipalType,accountEnabled,appOwnerOrganizationId,signInAudience,tags,passwordCredentials,keyCredentials'
     $uri = "https://graph.microsoft.com/v1.0/servicePrincipals?`$select=$select&`$expand=owners&`$top=100"
     $count = 0
     $skipped = 0
@@ -479,6 +585,49 @@ if ($copilotCount) {
 }
 
 Resolve-OwnerAccountStatus -OwnerObjects @($pending | ForEach-Object { $_.Owners })
+
+# Credentials (secrets / certificates) and their expiry
+foreach ($p in $pending) {
+    $cs = Get-CredentialSummary $p.Object
+    foreach ($k in $cs.Keys) { $p.Extra[$k] = $cs[$k] }
+}
+
+# Most recent users per app, from the sign-in logs. Only apps with delegated (user) sign-ins
+# in the period according to the sign-in activity report are queried.
+$recent = @{}
+if (-not $SkipRecentUsers -and $signInDataAvailable) {
+    $cutoff = [datetime]::UtcNow.AddDays(-$RecentSignInDays)
+    $toQuery = @($pending | ForEach-Object { $_.AppId } | Where-Object { $_ } | Sort-Object -Unique | Where-Object {
+        $s = Get-SignInSummary -AppId $_
+        ($s.LastDelegatedClientSignIn -and $s.LastDelegatedClientSignIn -ge $cutoff) -or ($s.LastDelegatedResourceSignIn -and $s.LastDelegatedResourceSignIn -ge $cutoff)
+    })
+    Write-Host "Reading recent user sign-ins for $($toQuery.Count) apps with user activity in the last $RecentSignInDays days..." -ForegroundColor Cyan
+    $n = 0
+    foreach ($appId in $toQuery) {
+        $n++
+        Write-Progress -Activity 'Recent user sign-ins' -Status "$n of $($toQuery.Count)" -PercentComplete ($n / [math]::Max(1, $toQuery.Count) * 100)
+        $s = Get-SignInSummary -AppId $appId
+        $asClient = $s.LastDelegatedClientSignIn -and $s.LastDelegatedClientSignIn -ge $cutoff
+        $r = Get-RecentUsers -AppId $appId -Field $(if ($asClient) { 'appId' } else { 'resourceId' })
+        if (-not $r.Users.Count -and $asClient -and $s.LastDelegatedResourceSignIn -and $s.LastDelegatedResourceSignIn -ge $cutoff) {
+            $r = Get-RecentUsers -AppId $appId -Field 'resourceId'
+        }
+        $recent[$appId] = $r
+    }
+    Write-Progress -Activity 'Recent user sign-ins' -Completed
+}
+foreach ($p in $pending) {
+    $r = if ($p.AppId) { $recent[$p.AppId] } else { $null }
+    if ($r) {
+        $p.Extra.RecentUsers = (@($r.Users | ForEach-Object { "$($_.Name) <$($_.Upn)> | $($_.When.ToString('yyyy-MM-ddTHH:mm:ssZ')) | $($_.Type)$(if ($_.Auth) { ' | ' + $_.Auth })" }) -join '; ')
+        $p.Extra.LastUserSignIn = $(if ($r.Users.Count) { $r.Users[0].When } else { $null })
+        $p.Extra.RecentUsersStatus = if ($r.Note) { $r.Note } elseif ($r.Users.Count) { 'OK' } else { "No successful user sign-ins found in the last $RecentSignInDays days" }
+    } else {
+        $p.Extra.RecentUsers = ''
+        $p.Extra.LastUserSignIn = $null
+        $p.Extra.RecentUsersStatus = if ($SkipRecentUsers) { 'Not checked (-SkipRecentUsers)' } elseif (-not $signInDataAvailable) { 'Not checked (no sign-in activity data)' } else { "No user sign-ins in the last $RecentSignInDays days" }
+    }
+}
 
 foreach ($p in $pending) {
     $results.Add((New-ResultRow -ObjectType $p.ObjectType -Object $p.Object -AppId $p.AppId -Owners $p.Owners -Extra $p.Extra))

@@ -18,10 +18,23 @@
     Changes made as part of an ARM / Bicep deployment are linked to the deployment name
     through the Activity Log correlation ID.
 
-    Output is one CSV with three kinds of row (RecordType):
-      Change        one row per resource change event
-      Resource      one row per resource that exists now
-      Subscription  one row per subscription, with any access errors
+    It also reviews Azure RBAC (unless -SkipRoleAssignments):
+
+      * Subscription owners: Owner assignments made directly on each subscription (not
+        inherited from a management group), with each owner's account status. A
+        subscription is 'Orphaned' when it has direct owners but none of them is an
+        enabled person (enabled user, or a group with at least one enabled member).
+      * Over-privileged role assignments: privileged roles (Owner, Contributor, User Access
+        Administrator, RBAC Administrator, custom roles with '*' or role-assignment write)
+        checked against what the principal actually changed in the Activity Log period:
+        unused, Owner where Contributor would do, subscription-wide where a few resource
+        groups would do, held by disabled / deleted / guest accounts, and so on.
+
+    Output is one CSV with four kinds of row (RecordType):
+      Change          one row per resource change event
+      Resource        one row per resource that exists now
+      Subscription    one row per subscription, with direct owners and any access errors
+      RoleAssignment  one row per Azure role assignment, with findings and a suggestion
 
     Load it into AzureChangeDashboard.html (same folder).
 
@@ -31,6 +44,9 @@
         Reading the Activity Log needs Microsoft.Insights/eventtypes/* (included in Reader).
       * To show service principal / managed identity names, the signed-in account needs
         to be able to read service principals in Entra ID (any member user can by default).
+      * For the RBAC review: Reader includes Microsoft.Authorization/*/read. Account status
+        of users, groups and service principals comes from Microsoft Graph (any member user
+        can read these; an unattended identity needs Directory.Read.All).
 
 .PARAMETER TenantId
     Tenant to report on. Defaults to the current Az context's tenant.
@@ -54,6 +70,13 @@
 
 .PARAMETER SkipResourceGraphChanges
     Don't query Resource Graph for property-level change details.
+
+.PARAMETER SkipRoleAssignments
+    Don't review role assignments / subscription owners.
+
+.PARAMETER BroadScopeResourceGroupLimit
+    A subscription-wide (or wider) Owner / Contributor whose changes touched this many
+    resource groups or fewer is flagged to be scoped to those resource groups. Default 3.
 
 .PARAMETER ManagedIdentityClientId
     Run unattended as this user-assigned managed identity (e.g. in Azure Functions), getting
@@ -80,6 +103,8 @@ param(
     [switch]$IncludeFailed,
     [string]$CreatorTagName = 'CreatedBy',
     [switch]$SkipResourceGraphChanges,
+    [switch]$SkipRoleAssignments,
+    [ValidateRange(1, 50)][int]$BroadScopeResourceGroupLimit = 3,
     [string]$ManagedIdentityClientId,
     [string]$OutputPath
 )
@@ -441,6 +466,8 @@ foreach ($e in ($events | Sort-Object { ConvertTo-UtcDate (Get-Prop $_ 'eventTim
     if ($e._action -like 'Microsoft.Resources/deployments/*') { $changeType = 'Deployment' }
 
     $c = Get-Caller $e
+    $c.Oid = [string](Get-Prop (Get-Prop $e 'claims') 'http://schemas.microsoft.com/identity/claims/objectidentifier')
+    $c.AppId = [string](Get-Prop (Get-Prop $e 'claims') 'appid')
     $changes.Add([pscustomobject]@{
         When = $when; Id = $rid; LId = $lid; Sub = $(if ($parts.Subscription) { $parts.Subscription } else { [string](Get-Prop $e 'subscriptionId') })
         Rg = $(if ($parts.ResourceGroup) { $parts.ResourceGroup } else { [string](Get-Prop $e 'resourceGroupName') })
@@ -457,7 +484,12 @@ $empty = [ordered]@{
     ResourceId = ''; Location = ''; ChangeType = ''; Operation = ''; OperationName = ''; Status = ''; Caller = ''; CallerName = ''; CallerType = ''
     CallerApp = ''; ClientIp = ''; Deployment = ''; CorrelationId = ''; ChangedProperties = ''; ResourceExists = ''
     CreatedTime = ''; CreatedBy = ''; CreatedBySource = ''; LastChangedTime = ''; LastChangedBy = ''; ChangesInPeriod = ''
-    Events = ''; Resources = ''; Errors = ''; PeriodStartUtc = (Format-Date $start); ReportGeneratedUtc = $reportTime
+    Events = ''; Resources = ''; Errors = ''
+    DirectOwners = ''; DirectOwnerCount = ''; ValidDirectOwnerCount = ''; OwnershipStatus = ''; InheritedOwners = ''
+    AssignmentId = ''; Scope = ''; ScopeType = ''; RoleName = ''; RoleType = ''; RoleIsPrivileged = ''; PrincipalId = ''; PrincipalName = ''
+    PrincipalType = ''; PrincipalUpn = ''; PrincipalStatus = ''; ChangesInScope = ''; AuthorizationChanges = ''; ResourceGroupsChanged = ''
+    ProvidersTouched = ''; LastChangeInScope = ''; Findings = ''; Severity = ''; Suggestion = ''
+    PeriodStartUtc = (Format-Date $start); ReportGeneratedUtc = $reportTime
 }
 function New-Row([hashtable]$Values) { $r = [ordered]@{}; foreach ($k in $empty.Keys) { $r[$k] = $empty[$k] }; foreach ($k in $Values.Keys) { $r[$k] = $Values[$k] }; [pscustomobject]$r }
 
@@ -494,11 +526,318 @@ foreach ($key in $inventory.Keys) {
     }))
 }
 
+#region Role assignments & subscription owners ---------------------------------------
+
+$assignments = [ordered]@{}   # lower(assignmentId) -> raw assignment
+$roleDefs = @{}               # lower(role GUID) -> role info
+$rbacRead = @{}               # subscriptionId -> $true when assignments were read
+$seenIn = @{}                 # lower(assignmentId) -> subscriptions it applies to (for inherited ones)
+$PrivilegedBuiltIn = @{
+    '8e3af657-a8ff-443c-a75c-2fe8c4bcb635' = 'Owner'
+    'b24988ac-6180-42a0-ab88-20f7382dd24c' = 'Contributor'
+    '18d7d88d-d35e-4fb5-a5c3-7773c20a72d9' = 'User Access Administrator'
+    'f58310d9-a9f6-439a-9e8d-f62e7b41a168' = 'Role Based Access Control Administrator'
+}
+$OwnerRoleId = '8e3af657-a8ff-443c-a75c-2fe8c4bcb635'
+
+function Add-RoleDefinition($Def) {
+    $guid = ([string]$Def.id -split '/')[-1].ToLowerInvariant()
+    $pr = Get-Prop $Def 'properties'
+    $actions = @(); $notActions = @()
+    foreach ($perm in @(Get-Prop $pr 'permissions')) {
+        if ($null -eq $perm) { continue }
+        $actions += @(Get-Prop $perm 'actions') | Where-Object { $_ }
+        $notActions += @(Get-Prop $perm 'notActions') | Where-Object { $_ }
+    }
+    $grants = { param($op) [bool](@($actions | Where-Object { $op -like $_ }).Count) -and -not @($notActions | Where-Object { $op -like $_ }).Count }
+    $all = '*' -in $actions
+    $rbac = & $grants 'Microsoft.Authorization/roleAssignments/write'
+    $type = [string](Get-Prop $pr 'type')
+    $roleDefs[$guid] = [pscustomobject]@{
+        Id = $guid; Name = [string](Get-Prop $pr 'roleName'); Type = $(if ($type -eq 'CustomRole') { 'Custom' } else { 'Built-in' })
+        AllActions = $all; GrantsRbac = $rbac
+        Privileged = ($PrivilegedBuiltIn.ContainsKey($guid) -or $all -or $rbac)
+    }
+}
+
+function Get-ScopeType([string]$Scope) {
+    if ($Scope -eq '/') { return 'Root' }
+    if ($Scope -match '^/providers/Microsoft\.Management/managementGroups/[^/]+$') { return 'Management group' }
+    if ($Scope -match '^/subscriptions/[^/]+$') { return 'Subscription' }
+    if ($Scope -match '^/subscriptions/[^/]+/resourceGroups/[^/]+$') { return 'Resource group' }
+    return 'Resource'
+}
+
+if (-not $SkipRoleAssignments) {
+    foreach ($s in $subs) {
+        $sid = $s.subscriptionId
+        Write-Host "Role assignments: $($s.displayName)" -ForegroundColor Cyan
+        try {
+            foreach ($d in Invoke-RestPaged -Uri "$Arm/subscriptions/$sid/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01") {
+                $g = ([string]$d.id -split '/')[-1].ToLowerInvariant()
+                if (-not $roleDefs.ContainsKey($g)) { Add-RoleDefinition $d }
+            }
+            # No filter: assignments at, above (management group / root) and below the subscription
+            foreach ($a in Invoke-RestPaged -Uri "$Arm/subscriptions/$sid/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01") {
+                $lid = ([string]$a.id).ToLowerInvariant()
+                $assignments[$lid] = $a
+                if (-not $seenIn.ContainsKey($lid)) { $seenIn[$lid] = [System.Collections.Generic.HashSet[string]]::new() }
+                [void]$seenIn[$lid].Add($sid.ToLowerInvariant())
+            }
+            $rbacRead[$sid] = $true
+        } catch {
+            $subStatus[$sid].Errors.Add("Role assignments: $($_.Exception.Message)")
+            Write-Warning "  Could not read role assignments in $($s.displayName): $($_.Exception.Message)"
+        }
+    }
+    # Role definitions not listed at subscription scope (e.g. custom roles defined higher up)
+    foreach ($a in $assignments.Values) {
+        $rdId = [string](Get-Prop (Get-Prop $a 'properties') 'roleDefinitionId')
+        $g = ($rdId -split '/')[-1].ToLowerInvariant()
+        if ($roleDefs.ContainsKey($g)) { continue }
+        try { Add-RoleDefinition (Invoke-Rest -Uri "$Arm$rdId`?api-version=2022-04-01") }
+        catch { $roleDefs[$g] = [pscustomobject]@{ Id = $g; Name = "Unknown role ($g)"; Type = 'Unknown'; AllActions = $false; GrantsRbac = $false; Privileged = $false } }
+    }
+    Write-Host "  $($assignments.Count) role assignments."
+
+    # --- Principals (Microsoft Graph, 20 per batch) ---
+    $principals = @{}   # principalId -> @{ Name; Upn; Type; Status; Enabled; Guest; AppId; Members }
+    $wanted = @{}
+    foreach ($a in $assignments.Values) {
+        $pr = Get-Prop $a 'properties'
+        $wanted[[string](Get-Prop $pr 'principalId')] = [string](Get-Prop $pr 'principalType')
+    }
+    $ids = @($wanted.Keys)
+    if ($ids.Count) { Write-Host "Resolving $($ids.Count) principals..." -ForegroundColor Cyan }
+    $graphOk = $true
+    for ($i = 0; $i -lt $ids.Count -and $graphOk; $i += 20) {
+        $pending = @($ids[$i..([math]::Min($i + 19, $ids.Count - 1))])
+        for ($attempt = 1; $pending.Count -and $attempt -le 5; $attempt++) {
+            $reqs = foreach ($id in $pending) {
+                $url = switch ($wanted[$id]) {
+                    'User' { "/users/$id`?`$select=id,displayName,userPrincipalName,accountEnabled,userType" }
+                    'Group' { "/groups/$id`?`$select=id,displayName" }
+                    'ServicePrincipal' { "/servicePrincipals/$id`?`$select=id,displayName,appId,accountEnabled,servicePrincipalType" }
+                    default { "/directoryObjects/$id" }
+                }
+                @{ id = $id; method = 'GET'; url = $url }
+            }
+            try {
+                $resp = Invoke-Rest -Uri 'https://graph.microsoft.com/v1.0/$batch' -Method POST -Payload (@{ requests = @($reqs) } | ConvertTo-Json -Depth 4)
+            } catch {
+                Write-Warning "Could not resolve principals in Microsoft Graph, account status will be 'Unknown': $($_.Exception.Message)"
+                $graphOk = $false; break
+            }
+            $retry = @(); $wait = 0
+            foreach ($r in @(Get-Prop $resp 'responses')) {
+                if ($null -eq $r) { continue }
+                $id = [string](Get-Prop $r 'id'); $code = [int](Get-Prop $r 'status'); $b = Get-Prop $r 'body'
+                $ptype = $wanted[$id]
+                if ($code -eq 200) {
+                    $enabled = Get-Prop $b 'accountEnabled'
+                    $odt = [string](Get-Prop $b '@odata.type')
+                    if ($ptype -notin 'User', 'Group', 'ServicePrincipal' -and $odt) { $ptype = ($odt -replace '^#microsoft\.graph\.', '') }
+                    $spType = [string](Get-Prop $b 'servicePrincipalType')
+                    $principals[$id] = @{
+                        Name = [string](Get-Prop $b 'displayName'); Upn = [string](Get-Prop $b 'userPrincipalName'); AppId = [string](Get-Prop $b 'appId')
+                        Type = $(if ($ptype -eq 'ServicePrincipal' -and $spType -eq 'ManagedIdentity') { 'Managed identity' } elseif ($ptype -eq 'ServicePrincipal') { 'Service principal' } else { $ptype })
+                        Enabled = $(if ($null -eq $enabled) { $true } else { [bool]$enabled })
+                        Guest = ([string](Get-Prop $b 'userType') -eq 'Guest')
+                        Status = $(if ($null -ne $enabled -and -not $enabled) { 'Disabled' } else { 'Enabled' }); Members = $null
+                    }
+                }
+                elseif ($code -eq 404) { $principals[$id] = @{ Name = ''; Upn = ''; AppId = ''; Type = $ptype; Enabled = $false; Guest = $false; Status = 'Deleted'; Members = $null } }
+                elseif ($code -eq 429 -or $code -ge 500) {
+                    $retry += $id
+                    $ra = Get-Prop (Get-Prop $r 'headers') 'Retry-After'
+                    $wait = [math]::Max($wait, $(if ($ra) { [int]$ra } else { 5 }))
+                }
+                else { Write-Verbose "Principal ${id}: HTTP $code" }
+            }
+            $pending = $retry
+            if ($pending.Count -and $wait) { Start-Sleep -Seconds $wait }
+        }
+    }
+
+    # Members of groups that hold privileged roles: owners need a real person behind them,
+    # and members' changes count as use of the group's role.
+    function Get-GroupMembers([string]$GroupId) {
+        $p = $principals[$GroupId]
+        if (-not $p -or $p.Status -ne 'Enabled') { return @() }
+        if ($null -eq $p.Members) {
+            $list = [System.Collections.Generic.List[object]]::new()
+            try {
+                $next = "https://graph.microsoft.com/v1.0/groups/$GroupId/transitiveMembers?`$select=id,displayName,userPrincipalName,accountEnabled,appId&`$top=999"
+                for ($page = 0; $next -and $page -lt 20; $page++) {
+                    $res = Invoke-Rest -Uri $next
+                    foreach ($m in @(Get-Prop $res 'value')) {
+                        if ($null -eq $m) { continue }
+                        $odt = [string](Get-Prop $m '@odata.type')
+                        if ($odt -and $odt -notin '#microsoft.graph.user', '#microsoft.graph.servicePrincipal') { continue }
+                        $en = Get-Prop $m 'accountEnabled'
+                        $list.Add(@{ Id = [string](Get-Prop $m 'id'); Upn = [string](Get-Prop $m 'userPrincipalName'); AppId = [string](Get-Prop $m 'appId')
+                            IsUser = ($odt -ne '#microsoft.graph.servicePrincipal'); Enabled = ($null -eq $en -or [bool]$en) })
+                    }
+                    $next = Get-Prop $res '@odata.nextLink'
+                }
+                $p.Members = $list.ToArray()
+            } catch {
+                Write-Verbose "Members of group ${GroupId}: $($_.Exception.Message)"
+                $p.Members = @()
+                $p.MembersUnknown = $true
+            }
+        }
+        return @($p.Members)
+    }
+
+    # --- Index changes by who made them ---
+    $changesBy = @{}
+    for ($ci = 0; $ci -lt $changes.Count; $ci++) {
+        $c = $changes[$ci]
+        if ($c.Status -ne 'Succeeded') { continue }
+        foreach ($k in @($c.Caller.Oid, $c.Caller.Id, $c.Caller.AppId) | Where-Object { $_ } | ForEach-Object { $_.ToLowerInvariant() } | Select-Object -Unique) {
+            if (-not $changesBy.ContainsKey($k)) { $changesBy[$k] = [System.Collections.Generic.List[int]]::new() }
+            $changesBy[$k].Add($ci)
+        }
+    }
+    function Get-ChangesBy([string[]]$Keys) {
+        $set = [System.Collections.Generic.HashSet[int]]::new()
+        foreach ($k in $Keys) {
+            if (-not $k) { continue }
+            $l = $changesBy[$k.ToLowerInvariant()]
+            if ($l) { foreach ($x in $l) { [void]$set.Add($x) } }
+        }
+        return $set
+    }
+    $sevRank = @{ None = 0; Low = 1; Medium = 2; High = 3 }
+
+    # --- Assess each assignment ---
+    $assessed = [System.Collections.Generic.List[object]]::new()
+    foreach ($a in $assignments.Values) {
+        $pr = Get-Prop $a 'properties'
+        $scope = [string](Get-Prop $pr 'scope')
+        $scopeType = Get-ScopeType $scope
+        $role = $roleDefs[([string](Get-Prop $pr 'roleDefinitionId') -split '/')[-1].ToLowerInvariant()]
+        $pid_ = [string](Get-Prop $pr 'principalId')
+        $p = $principals[$pid_]
+        if (-not $p) { $p = @{ Name = ''; Upn = ''; AppId = ''; Type = $wanted[$pid_]; Enabled = $true; Guest = $false; Status = 'Unknown'; Members = $null } }
+        if ($p.Type -eq 'ServicePrincipal') { $p.Type = 'Service principal' }
+        $isGroup = $p.Type -eq 'Group'
+        $members = @(if ($isGroup -and ($role.Privileged -or $role.Id -eq $OwnerRoleId)) { Get-GroupMembers $pid_ })
+
+        # Changes the principal (or, for a group, its members) made within the assignment's scope
+        $keys = if ($isGroup) { @($members | ForEach-Object { $_.Id; $_.Upn; $_.AppId }) } else { @($pid_, $p.Upn, $p.AppId) }
+        $idx = Get-ChangesBy $keys
+        $lscope = $scope.ToLowerInvariant().TrimEnd('/')
+        $inScope = @(foreach ($x in $idx) {
+            $c = $changes[$x]
+            if (($scopeType -in 'Root', 'Management group' -and $seenIn[([string]$a.id).ToLowerInvariant()].Contains($c.Sub.ToLowerInvariant())) -or
+                $c.LId -eq $lscope -or $c.LId.StartsWith("$lscope/")) { $c }
+        })
+        $authChanges = @($inScope | Where-Object { $_.Operation -like 'Microsoft.Authorization/*' })
+        $rgsChanged = @($inScope | Where-Object { $_.Rg } | ForEach-Object { "$($subNames[$_.Sub.ToLowerInvariant()])/$($_.Rg)" } | Sort-Object -Unique)
+        $rgNames = @($inScope | Where-Object { $_.Rg } | ForEach-Object { $_.Rg } | Sort-Object -Unique)
+        $subLevel = @($inScope | Where-Object { -not $_.Rg })
+        $providers = @($inScope | ForEach-Object { ($_.Operation -split '/')[0] } | Sort-Object -Unique)
+        $lastChange = $inScope | Sort-Object When -Descending | Select-Object -First 1
+
+        $findings = [System.Collections.Generic.List[string]]::new(); $suggest = [System.Collections.Generic.List[string]]::new()
+        $box = @{ Sev = 'None' }
+        $flag = { param($sv, $f, $sg) $findings.Add($f); if ($sg) { $suggest.Add($sg) }; if ($sevRank[$sv] -gt $sevRank[$box.Sev]) { $box.Sev = $sv } }
+        $broad = $scopeType -in 'Root', 'Management group', 'Subscription'
+        $isOwnerLike = $role.Id -in '8e3af657-a8ff-443c-a75c-2fe8c4bcb635', '18d7d88d-d35e-4fb5-a5c3-7773c20a72d9', 'f58310d9-a9f6-439a-9e8d-f62e7b41a168' -or ($role.Type -eq 'Custom' -and ($role.AllActions -or $role.GrantsRbac))
+        # Can't judge use when the Activity Log couldn't be read for the subscription(s) in scope
+        $scopeSubs = @(if ($scope -match '^/subscriptions/([^/]+)') { $Matches[1] } else { $subs | Where-Object { $seenIn[([string]$a.id).ToLowerInvariant()].Contains($_.subscriptionId.ToLowerInvariant()) } | ForEach-Object { $_.subscriptionId } })
+        $logMissing = @($scopeSubs | Where-Object { -not $subStatus.ContainsKey($_) -or @($subStatus[$_].Errors | Where-Object { $_ -like 'Activity Log*' }).Count })
+        $activityKnown = -not ($isGroup -and (-not $members.Count)) -and $logMissing.Count -lt $scopeSubs.Count
+
+        if ($p.Status -eq 'Deleted') {
+            & $flag $(if ($role.Privileged) { 'High' } else { 'Medium' }) 'Principal deleted' 'Remove the assignment: the identity no longer exists'
+        }
+        elseif ($p.Status -eq 'Disabled') {
+            & $flag $(if ($role.Privileged) { 'High' } else { 'Medium' }) "Disabled $($p.Type.ToLowerInvariant()) holds the role" 'Remove the assignment: re-enabling the account would restore the access'
+        }
+        else {
+            if ($p.Guest -and $role.Privileged) { & $flag 'High' 'Guest user with a privileged role' 'Use a member account, or a narrower role' }
+            if ($role.Type -eq 'Custom' -and $role.AllActions) { & $flag $(if ($broad) { 'High' } else { 'Medium' }) "Custom role grants all actions ('*')" 'Replace with a role listing only the actions needed' }
+            if ($isOwnerLike -and $p.Type -eq 'User' -and $broad) { & $flag 'Medium' "$($role.Name) assigned directly to a user at $($scopeType.ToLowerInvariant()) scope" 'Assign through a group and make it PIM-eligible rather than standing access' }
+            if ($scopeType -in 'Root', 'Management group' -and $role.Privileged) { & $flag 'Low' "Privileged role at $($scopeType.ToLowerInvariant()) scope (inherited by every subscription below)" 'Assign at the subscriptions / resource groups that need it' }
+            if ($role.Privileged -and $activityKnown -and $p.Status -eq 'Enabled') {
+                if (-not $inScope.Count -and -not $logMissing.Count) {
+                    & $flag 'Medium' "No changes made in scope in the last $Days days" "Remove, or make PIM-eligible; if it's used for data-plane or read access, a Reader / data role will do"
+                }
+                else {
+                    if ($isOwnerLike -and -not $authChanges.Count) {
+                        & $flag 'Medium' "$($role.Name) but no access-control (Microsoft.Authorization) changes made" 'Contributor (or a narrower role) covers the changes made'
+                    }
+                    if ($broad -and ($role.Id -in '8e3af657-a8ff-443c-a75c-2fe8c4bcb635', 'b24988ac-6180-42a0-ab88-20f7382dd24c' -or $role.AllActions) -and -not $subLevel.Count -and $rgNames.Count -le $BroadScopeResourceGroupLimit) {
+                        & $flag 'Low' "$($scopeType)-wide role but changes only touched $($rgNames.Count) resource group(s)" "Scope to resource group(s): $($rgNames -join ', ')"
+                    }
+                }
+            }
+        }
+        $sev = $box.Sev
+        $sub = if ($scope -match '^/subscriptions/([^/]+)') { $Matches[1] } else { '' }
+        $assessed.Add([pscustomobject]@{
+            Id = [string]$a.id; Scope = $scope; ScopeType = $scopeType; Sub = $sub; Role = $role; PrincipalId = $pid_; P = $p; Members = $members
+            InScope = $inScope.Count; Auth = $authChanges.Count; Rgs = $rgsChanged; Providers = $providers; Last = $(if ($lastChange) { $lastChange.When } else { $null })
+            Findings = $findings; Suggest = $suggest; Severity = $sev; Created = (ConvertTo-UtcDate (Get-Prop $pr 'createdOn'))
+            Rg = $(if ($scope -match '/resourceGroups/([^/]+)') { $Matches[1] } else { '' })
+        })
+    }
+    $flagged = @($assessed | Where-Object { $_.Severity -ne 'None' })
+    Write-Host "  $($flagged.Count) of $($assessed.Count) role assignments flagged as over-privileged or stale."
+}
+
+# Display name of a principal for the owner lists
+function Get-PrincipalLabel($x) {
+    $n = if ($x.P.Name) { $x.P.Name } elseif ($x.P.Upn) { $x.P.Upn } else { $x.PrincipalId }
+    $t = if ($x.P.Type) { $x.P.Type } else { 'Unknown' }
+    "$n ($t, $($x.P.Status))"
+}
+
 foreach ($s in $subs) {
     $st = $subStatus[$s.subscriptionId]
-    $rows.Add((New-Row @{ RecordType = 'Subscription'; SubscriptionId = $s.subscriptionId; SubscriptionName = $s.displayName
-        Events = $st.Events; Resources = $st.Resources; Errors = ($st.Errors -join ' | ') }))
+    $own = @{}
+    if (-not $SkipRoleAssignments -and $rbacRead.ContainsKey($s.subscriptionId)) {
+        $lsub = "/subscriptions/$($s.subscriptionId)".ToLowerInvariant()
+        $owners = @($assessed | Where-Object { $_.Role.Id -eq $OwnerRoleId -and $_.Scope.ToLowerInvariant().TrimEnd('/') -eq $lsub })
+        $inherited = @($assessed | Where-Object { $_.Role.Id -eq $OwnerRoleId -and $_.ScopeType -in 'Root', 'Management group' -and $seenIn[$_.Id.ToLowerInvariant()].Contains($s.subscriptionId.ToLowerInvariant()) })
+        # A valid owner is an enabled person: an enabled user, or a group with an enabled user in it
+        $valid = @($owners | Where-Object {
+            ($_.P.Type -eq 'User' -and $_.P.Status -eq 'Enabled') -or
+            ($_.P.Type -eq 'Group' -and $_.P.Status -eq 'Enabled' -and @($_.Members | Where-Object { $_.IsUser -and $_.Enabled }).Count)
+        })
+        $status = if (-not $owners.Count) { 'No direct owner' }
+                  elseif (-not $valid.Count) { 'Orphaned' }
+                  elseif (@($owners | Where-Object { $_.P.Status -in 'Disabled', 'Deleted' }).Count) { 'Has disabled owner(s)' }
+                  else { 'OK' }
+        $own = @{
+            DirectOwners = (@($owners | ForEach-Object { Get-PrincipalLabel $_ }) -join '; '); DirectOwnerCount = $owners.Count
+            ValidDirectOwnerCount = $valid.Count; OwnershipStatus = $status
+            InheritedOwners = (@($inherited | ForEach-Object { "$(Get-PrincipalLabel $_) at $($_.Scope)" }) -join '; ')
+        }
+    }
+    $rows.Add((New-Row (@{ RecordType = 'Subscription'; SubscriptionId = $s.subscriptionId; SubscriptionName = $s.displayName
+        Events = $st.Events; Resources = $st.Resources; Errors = ($st.Errors -join ' | ') } + $own)))
 }
+
+if (-not $SkipRoleAssignments) {
+    foreach ($x in $assessed) {
+        $rows.Add((New-Row @{
+            RecordType = 'RoleAssignment'; SubscriptionId = $x.Sub; SubscriptionName = $(if ($x.Sub) { $subNames[$x.Sub.ToLowerInvariant()] } else { '' })
+            ResourceGroup = $x.Rg; ResourceId = $(if ($x.ScopeType -eq 'Resource') { $x.Scope } else { '' })
+            ResourceName = $(if ($x.ScopeType -eq 'Resource') { ($x.Scope -split '/')[-1] } else { '' })
+            AssignmentId = $x.Id; Scope = $x.Scope; ScopeType = $x.ScopeType; RoleName = $x.Role.Name; RoleType = $x.Role.Type; RoleIsPrivileged = $x.Role.Privileged
+            PrincipalId = $x.PrincipalId; PrincipalName = $x.P.Name; PrincipalType = $x.P.Type; PrincipalUpn = $x.P.Upn; PrincipalStatus = $x.P.Status
+            ChangesInScope = $x.InScope; AuthorizationChanges = $x.Auth; ResourceGroupsChanged = ($x.Rgs -join '; '); ProvidersTouched = ($x.Providers -join '; ')
+            LastChangeInScope = (Format-Date $x.Last); Findings = ($x.Findings -join '; '); Severity = $x.Severity; Suggestion = ($x.Suggest -join '; ')
+            CreatedTime = (Format-Date $x.Created)
+        }))
+    }
+}
+
+#endregion
 
 $summary = $changes | Group-Object ChangeType | Sort-Object Count -Descending
 foreach ($g in $summary) { Write-Host ("  {0,-18} {1}" -f $g.Name, $g.Count) }

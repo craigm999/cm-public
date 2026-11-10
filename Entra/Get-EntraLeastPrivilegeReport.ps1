@@ -23,10 +23,12 @@
          Not covered by an active role / Unmapped activity) and each role
          assignment or activation (Appropriate / Over-privileged / Not needed / Not used).
 
-    The output CSV has three kinds of row (RecordType):
-      Action      one row per audited action by an admin
-      RoleWindow  one row per period a role was active for a user
-      Role        the role catalogue with privilege ranking
+    The output CSV has four kinds of row (RecordType):
+      Action              one row per audited action by an admin
+      RoleWindow          one row per period a role was active for a user
+      Role                the role catalogue with privilege ranking
+      DisabledRoleHolder  a disabled account that currently holds a role (active or
+                          PIM-eligible, directly or through a group)
 
     Load it into LeastPrivilegeDashboard.html (same folder).
 
@@ -389,6 +391,72 @@ foreach ($w in $rawWindows) {
     }
 }
 
+# --- Disabled accounts that still hold roles ----------------------------------------
+# Current holders: assignments / activations in force now (not history) and current PIM
+# eligibility, expanded through groups. Their account status comes from /users.
+$nowUtc = [datetime]::UtcNow
+$currentHolders = [System.Collections.Generic.List[object]]::new()
+foreach ($w in $windows) {
+    if ($w.Source -like 'Assignment (since removed)*') { continue }
+    if (($w.Start -and $w.Start -gt $nowUtc) -or ($w.End -and $w.End -le $nowUtc)) { continue }
+    $kind = if ($w.Source -like 'PIM activation*') { 'Active (PIM activation)' } elseif ($w.Source -like 'Time-bound*') { 'Active (time-bound)' } elseif ($w.Source -like 'Permanent*') { 'Active (permanent)' } else { 'Active' }
+    $via = if ($w.Source -match 'via group (.+)$') { " via group $($Matches[1])" } else { '' }
+    $currentHolders.Add([pscustomobject]@{ UserId = $w.UserId; RoleId = $w.RoleId; Scope = $w.Scope; Start = $w.Start; End = $w.End; Source = "$kind$via" })
+}
+foreach ($e in $eligible) {
+    if ($e.End -and $e.End -le $nowUtc) { continue }
+    $p = $principals[[string]$e.PrincipalId]
+    if (-not $p) { continue }
+    switch (Get-Prop $p '@odata.type') {
+        '#microsoft.graph.user' { $currentHolders.Add([pscustomobject]@{ UserId = $p['id']; RoleId = $e.RoleId; Scope = $(if ($e.Scope) { $e.Scope } else { '/' }); Start = $e.Start; End = $e.End; Source = 'Eligible (PIM)' }) }
+        '#microsoft.graph.group' {
+            if (-not $groupMembers.ContainsKey($p['id'])) {
+                $groupMembers[$p['id']] = @(Invoke-GraphPaged -Uri "https://graph.microsoft.com/v1.0/groups/$($p['id'])/transitiveMembers/microsoft.graph.user?`$select=id,userPrincipalName,displayName")
+            }
+            foreach ($m in $groupMembers[$p['id']]) {
+                $users[$m['id']] = @{ Upn = $m['userPrincipalName']; Name = $m['displayName'] }
+                $currentHolders.Add([pscustomobject]@{ UserId = $m['id']; RoleId = $e.RoleId; Scope = $(if ($e.Scope) { $e.Scope } else { '/' }); Start = $e.Start; End = $e.End; Source = "Eligible (PIM) via group $($p['displayName'])" })
+            }
+        }
+    }
+}
+
+$holderIds = @($currentHolders | ForEach-Object { $_.UserId } | Sort-Object -Unique)
+$accountStatus = @{}   # userId -> @{ Enabled; LastSignIn; Upn; Name }
+if ($holderIds.Count) {
+    Write-Host "Checking account status of $($holderIds.Count) role holders..." -ForegroundColor Cyan
+    $withSignIn = $true
+    for ($i = 0; $i -lt $holderIds.Count; $i += 20) {
+        $pending = @($holderIds[$i..([math]::Min($i + 19, $holderIds.Count - 1))])
+        for ($attempt = 1; $pending.Count -and $attempt -le 5; $attempt++) {
+            $sel = if ($withSignIn) { 'id,accountEnabled,userPrincipalName,displayName,signInActivity' } else { 'id,accountEnabled,userPrincipalName,displayName' }
+            $body = @{ requests = @($pending | ForEach-Object { @{ id = $_; method = 'GET'; url = "/users/$_`?`$select=$sel" } }) } | ConvertTo-Json -Depth 4
+            $resp = Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/$batch' -Body $body -ContentType 'application/json' -OutputType Hashtable
+            $retry = @(); $wait = 0
+            foreach ($r in $resp['responses']) {
+                $status = [int]$r['status']; $b = $r['body']
+                if ($status -eq 200) {
+                    $sia = Get-Prop $b 'signInActivity'
+                    $last = ConvertTo-UtcDate (Get-Prop $sia 'lastSuccessfulSignInDateTime')
+                    if (-not $last) { $last = @((ConvertTo-UtcDate (Get-Prop $sia 'lastSignInDateTime')), (ConvertTo-UtcDate (Get-Prop $sia 'lastNonInteractiveSignInDateTime'))) | Where-Object { $_ } | Sort-Object -Descending | Select-Object -First 1 }
+                    $accountStatus[[string]$r['id']] = @{ Enabled = [bool](Get-Prop $b 'accountEnabled'); LastSignIn = $last; Upn = Get-Prop $b 'userPrincipalName'; Name = Get-Prop $b 'displayName' }
+                }
+                elseif ($status -eq 403 -and $withSignIn) { $withSignIn = $false; $retry += [string]$r['id'] }   # no sign-in activity licence / permission
+                elseif ($status -eq 429 -or $status -ge 500) {
+                    $retry += [string]$r['id']
+                    $ra = Get-Prop (Get-Prop $r 'headers') 'Retry-After'
+                    $wait = [math]::Max($wait, $(if ($ra) { [int]$ra } else { 5 }))
+                }
+                else { Write-Verbose "Account status for $($r['id']): HTTP $status" }
+            }
+            $pending = $retry
+            if ($pending.Count -and $wait) { Start-Sleep -Seconds $wait }
+        }
+    }
+}
+$disabledHolders = @($currentHolders | Where-Object { $accountStatus.ContainsKey([string]$_.UserId) -and -not $accountStatus[[string]$_.UserId].Enabled })
+Write-Host "  $(@($disabledHolders | ForEach-Object { $_.UserId } | Sort-Object -Unique).Count) disabled account(s) still hold $($disabledHolders.Count) role assignment(s)."
+
 # Everyone to analyse: anyone with an active role window, plus anyone eligible for a role
 # (their activations may only be visible in history / the audit log)
 $candidateIds = [System.Collections.Generic.HashSet[string]]::new()
@@ -624,7 +692,7 @@ foreach ($uid in $adminIds) {
             CandidateRoles = (($candidates | Select-Object -First 12 | ForEach-Object { "$($_.Name)|$($_.Score)" }) -join '; ')
             RoleName = ''; RoleId = ''; RoleIsPrivileged = ''; AssignmentSource = ''; Scope = ''; WindowStart = ''; WindowEnd = ''
             ActionsInWindow = ''; ActionsCoveredByRole = ''; WindowVerdict = ''; SuggestedRoles = ''
-            RoleIsBuiltIn = ''; PrivilegeScore = ''; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable
+            RoleIsBuiltIn = ''; PrivilegeScore = ''; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable; LastSuccessfulSignIn = ''
             PeriodStartUtc = Format-Date $periodStart; ReportGeneratedUtc = $reportTime
         })
     }
@@ -656,7 +724,7 @@ foreach ($w in $windows) {
         RoleName = $role.Name; RoleId = $role.Id; RoleIsPrivileged = $role.IsPrivileged; AssignmentSource = $w.Source; Scope = $w.Scope
         WindowStart = Format-Date $w.Start; WindowEnd = Format-Date $w.End
         ActionsInWindow = $inWindow.Count; ActionsCoveredByRole = $byRole.Count; WindowVerdict = $verdict; SuggestedRoles = $suggest -join '; '
-        RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable
+        RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable; LastSuccessfulSignIn = ''
         PeriodStartUtc = Format-Date $periodStart; ReportGeneratedUtc = $reportTime
     })
 }
@@ -674,7 +742,22 @@ foreach ($e in $eligible) {
         RoleName = $role.Name; RoleId = $role.Id; RoleIsPrivileged = $role.IsPrivileged; AssignmentSource = 'Eligible (PIM)'; Scope = $e.Scope
         WindowStart = Format-Date $e.Start; WindowEnd = Format-Date $e.End
         ActionsInWindow = ''; ActionsCoveredByRole = ''; WindowVerdict = 'Eligible'; SuggestedRoles = ''
+        RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable; LastSuccessfulSignIn = ''
+        PeriodStartUtc = Format-Date $periodStart; ReportGeneratedUtc = $reportTime
+    })
+}
+foreach ($h in $disabledHolders) {
+    $role = $roles[$h.RoleId]; if (-not $role) { continue }
+    $st = $accountStatus[[string]$h.UserId]
+    $rows.Add([pscustomobject][ordered]@{
+        RecordType = 'DisabledRoleHolder'; UserId = $h.UserId; UserPrincipalName = $st.Upn; UserDisplayName = $st.Name
+        ActivityDateTime = ''; Activity = ''; Category = ''; Service = ''; Result = ''; TargetName = ''; TargetType = ''; TargetId = ''
+        RequiredPermissions = ''; Assessment = ''; AssessmentDetail = ''; ActiveRoles = ''; HighestActiveRole = ''; RoleUsed = ''
+        CoveringRoles = ''; LeastPrivilegedRoles = ''; CandidateRoles = ''
+        RoleName = $role.Name; RoleId = $role.Id; RoleIsPrivileged = $role.IsPrivileged; AssignmentSource = $h.Source; Scope = $h.Scope
+        WindowStart = Format-Date $h.Start; WindowEnd = Format-Date $h.End; ActionsInWindow = ''; ActionsCoveredByRole = ''; WindowVerdict = ''; SuggestedRoles = ''
         RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable
+        LastSuccessfulSignIn = Format-Date $st.LastSignIn
         PeriodStartUtc = Format-Date $periodStart; ReportGeneratedUtc = $reportTime
     })
 }
@@ -686,7 +769,7 @@ foreach ($role in ($roleList | Where-Object { -not $_.Ignored })) {
         CoveringRoles = ''; LeastPrivilegedRoles = ''; CandidateRoles = ''
         RoleName = $role.Name; RoleId = $role.Id; RoleIsPrivileged = $role.IsPrivileged; AssignmentSource = ''; Scope = ''
         WindowStart = ''; WindowEnd = ''; ActionsInWindow = ''; ActionsCoveredByRole = ''; WindowVerdict = ''; SuggestedRoles = ''
-        RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable
+        RoleIsBuiltIn = $role.IsBuiltIn; PrivilegeScore = $role.Score; PimDataAvailable = $pimAvailable; PimHistoryAvailable = $historyAvailable; LastSuccessfulSignIn = ''
         PeriodStartUtc = Format-Date $periodStart; ReportGeneratedUtc = $reportTime
     })
 }

@@ -12,6 +12,16 @@ read sign-in reports (e.g. Reports Reader / Global Reader) and an Entra ID P1/P2
 the sign-in activity data. See the comment-based help (`Get-Help .\Get-EntraAppSignInReport.ps1 -Full`)
 for all options.
 
+Also reported per app:
+
+- **Credential expiry**: client secrets and certificates on the app registration and the enterprise
+  app (e.g. SAML signing certificates): count, next expiry, expired ones, and a status (*All expired*,
+  *Expiring soon* within `-CredentialWarningDays`, default 30, *OK*, *No credentials*).
+- **Recent users**: the last `-RecentUserCount` (default 5) distinct people who signed in to the app
+  successfully in the last `-RecentSignInDays` (default 30, sign-in logs are kept for 30 days on P1/P2),
+  with the time, interactive / non-interactive and MFA / single-factor. Only apps with recent delegated
+  sign-in activity are queried, so this stays quick on large tenants. Skip it with `-SkipRecentUsers`.
+
 Apps created by **Copilot Studio** (formerly **Power Virtual Agents**) are detected from the tags
 Copilot Studio puts on their service principals (`AgentCreatedBy:CopilotStudio`,
 `power-virtual-agents-<agentId>`, `AIAgentBuilder`) or a display name containing
@@ -29,6 +39,9 @@ The dashboard highlights:
 - **No owners**
 - **Disabled owner(s)** – at least one owner account is disabled (and how many have *every* owner disabled)
 - **Unused > 2 years** – threshold adjustable to 1 or 3 years
+- **Credential expiry** – expired, expiring within 30 days, within 90 days, OK, or no credentials;
+  each app's next expiry is shown in the table
+- **Recent users** column – the last people who signed in, with how they signed in
 
 Tick **Hide Copilot Studio / PVA apps** to filter those agents out of every chart and the table.
 
@@ -84,6 +97,11 @@ expanded, and device/app filters aren't evaluated.
 Options: `-Days` (default 30), `-UserPrincipalName` to limit to specific admins, `-MapPath` for a
 custom activity map, `-IncludeActivationHistoryPermission` (see below).
 
+It also lists **disabled accounts that still hold Entra roles**: active, time-bound and PIM-eligible
+assignments, direct or through a role-assignable group, held by an account that's disabled, with the
+account's last successful sign-in (needs Entra ID P1/P2; left blank otherwise). These are
+`DisabledRoleHolder` rows in the CSV.
+
 Permissions:
 
 | What | Graph permission | Signed-in user's Entra role (delegated) |
@@ -130,6 +148,8 @@ Open `LeastPrivilegeDashboard.html` and drop the CSV onto it (or **Sample data**
 - **Admins** table with a suggested minimal set of roles per admin, worked out from what they
   actually did; roles that weren't needed are struck through.
 - **Role assignments and PIM activations**, each with a verdict.
+- **Disabled accounts still holding Entra roles**, privileged roles highlighted and listed first.
+  Remove these: re-enabling the account would restore the access.
 - **Actions** list and an **Unmapped activities** list with template rows for the map.
 
 Audit logs don't record which role was used for an action, so the report assumes the

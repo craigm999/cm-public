@@ -71,7 +71,9 @@
   .filters label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
   .filters input[type=search] { min-width: 220px; flex: 1 1 220px; max-width: 380px; }
 
-  .tiles { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .tiles { display: grid; grid-template-columns: minmax(180px, 1.3fr) repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+  tr.priv td { background: rgba(208,59,59,0.06); }
+  .privtag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--serious-text); border: 1px solid var(--serious); border-radius: 999px; padding: 0 6px; margin-left: 6px; white-space: nowrap; }
   .tile { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
   button.tile:hover { background: var(--surface-2); }
   .tile[aria-pressed="true"] { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); background: var(--accent-wash); }
@@ -215,6 +217,14 @@
       </section>
     </div>
 
+    <section class="card" id="disabledCard">
+      <div class="table-head">
+        <div><h2>Disabled accounts still holding Entra roles</h2>
+          <p class="card-sub" id="disSub" style="margin:0">Roles assigned (active or PIM-eligible, directly or through a group) to accounts that are disabled. Privileged roles are highlighted; remove these assignments, as re-enabling the account would restore the access.</p></div>
+      </div>
+      <div class="table-scroll" style="max-height:420px"><table><thead><tr id="disHead"></tr></thead><tbody id="disBody"></tbody></table></div>
+    </section>
+
     <section class="card">
       <div class="table-head">
         <div><h2>Admins</h2><p class="card-sub" id="admSub" style="margin:0"></p></div>
@@ -293,7 +303,7 @@
   };
   const WIN_COLOR = { 'Over-privileged': 'var(--serious)', 'Not used': 'var(--warning)', 'Not needed (another role covered these actions)': 'var(--warning)', 'Appropriate': 'var(--good)' };
 
-  let ACTIONS = [], WINDOWS = [], ELIGIBLE = [], ROLES = new Map(), USERS = [], META = {};
+  let ACTIONS = [], WINDOWS = [], ELIGIBLE = [], DISABLED = [], ROLES = new Map(), USERS = [], META = {};
   let focus = null, actPage = 200;
   let admSort = { key: 'verdict', dir: 1 }, actSort = { key: 'when', dir: -1 }, winSort = { key: 'start', dir: -1 };
   const expanded = new Set();
@@ -331,7 +341,7 @@
       alert('This does not look like a Get-EntraLeastPrivilegeReport.ps1 CSV (missing RecordType / WindowVerdict columns).');
       return;
     }
-    ROLES = new Map(); ACTIONS = []; WINDOWS = []; ELIGIBLE = [];
+    ROLES = new Map(); ACTIONS = []; WINDOWS = []; ELIGIBLE = []; DISABLED = [];
     for (const r of rows) {
       if (r.RecordType === 'Role') ROLES.set(r.RoleName, { name: r.RoleName, priv: /true/i.test(r.RoleIsPrivileged), score: +r.PrivilegeScore || 0 });
     }
@@ -349,6 +359,10 @@
           source: r.AssignmentSource, scope: r.Scope, start: date(r.WindowStart), end: date(r.WindowEnd),
           inWin: +r.ActionsInWindow || 0, covered: +r.ActionsCoveredByRole || 0, verdict: r.WindowVerdict, suggest: list(r.SuggestedRoles) };
         (r.WindowVerdict === 'Eligible' ? ELIGIBLE : WINDOWS).push(w);
+      } else if (r.RecordType === 'DisabledRoleHolder') {
+        DISABLED.push({ userId: r.UserId, upn: r.UserPrincipalName, name: r.UserDisplayName || r.UserPrincipalName, role: r.RoleName,
+          priv: /true/i.test(r.RoleIsPrivileged), source: r.AssignmentSource, scope: r.Scope, start: date(r.WindowStart), end: date(r.WindowEnd),
+          lastSignIn: date(r.LastSuccessfulSignIn) });
       }
     });
     const any = rows.find(r => r.ReportGeneratedUtc);
@@ -356,6 +370,7 @@
       source, generated: any ? date(any.ReportGeneratedUtc) : null, start: any ? date(any.PeriodStartUtc) : null,
       pim: !rows.some(r => /false/i.test(r.PimDataAvailable || '')),
       history: !rows.some(r => /false/i.test(r.PimHistoryAvailable || '')),
+      hasDisabled: rows.length > 0 && 'LastSuccessfulSignIn' in rows[0],
     };
     buildUsers();
     focus = null; expanded.clear();
@@ -479,6 +494,12 @@
       { label: 'Over-privileged PIM activations', value: fmtInt.format(pimOver), meta: `${fmtInt.format(pimUnused)} more with no admin activity`, color: 'var(--serious)', f: { kind: 'window', value: 'pim-over', label: 'Over-privileged PIM activations' } },
       { label: 'Unused privileged standing roles', value: fmtInt.format(unusedStanding), meta: 'consider removing or making eligible', color: 'var(--warning)', f: { kind: 'window', value: 'standing-unused', label: 'Unused privileged standing roles' } },
       { label: 'Not covered by an active role', value: fmtInt.format(acts.filter(a => a.assessment === 'Not covered by an active role').length), meta: 'check ownership or missing history', color: 'var(--warning)', f: { kind: 'assess', value: 'Not covered by an active role', label: 'Actions not covered by an active role' } },
+      (() => {
+        const d = disabledInView();
+        const accounts = new Set(d.map(x => x.userId)).size, privAccounts = new Set(d.filter(x => x.priv).map(x => x.userId)).size;
+        return { label: 'Disabled accounts holding roles', value: META.hasDisabled ? fmtInt.format(accounts) : '–', meta: META.hasDisabled ? `${fmtInt.format(privAccounts)} with privileged roles` : 're-run the script to check',
+          color: 'var(--critical)', scroll: 'disabledCard' };
+      })(),
     ];
     defs.forEach(d => {
       const b = el('button', 'tile' + (d.hero ? ' hero' : '')); b.type = 'button';
@@ -486,7 +507,7 @@
       const l = el('span', 'label'); if (d.color) { const dot = el('span', 'dot'); dot.style.background = d.color; l.append(dot); }
       l.append(document.createTextNode(d.label));
       b.append(l, el('span', 'value', d.value), el('span', 'meta', d.meta));
-      b.addEventListener('click', () => setFocus(d.f));
+      b.addEventListener('click', () => d.scroll ? $(d.scroll).scrollIntoView({ behavior: 'smooth', block: 'start' }) : setFocus(d.f));
       t.append(b);
     });
   }
@@ -785,6 +806,41 @@
     }
   }
 
+  function disabledInView() {
+    const q = $('fSearch').value.trim().toLowerCase();
+    return DISABLED.filter(d => !q || `${d.name} ${d.upn}`.toLowerCase().includes(q));
+  }
+  let disSort = { key: 'priv', dir: 1 };
+  function renderDisabled() {
+    $('disabledCard').classList.toggle('hidden', !META.hasDisabled);
+    if (!META.hasDisabled) return;
+    const rows = disabledInView();
+    const accounts = new Set(rows.map(r => r.userId)).size;
+    $('disSub').textContent = rows.length
+      ? `${fmtInt.format(accounts)} disabled account(s) hold ${fmtInt.format(rows.length)} role assignment(s), ${fmtInt.format(rows.filter(r => r.priv).length)} of them privileged. Remove these assignments: re-enabling an account would restore the access.`
+      : 'No disabled accounts hold Entra roles.';
+    const cols = [
+      { key: 'priv', label: 'Role', get: r => (r.priv ? 0 : 1) * 1e12 - scoreOf(r.role) },
+      { key: 'name', label: 'Disabled account', get: r => r.name.toLowerCase() },
+      { key: 'src', label: 'How it\'s held', get: r => r.source },
+      { key: 'start', label: 'Since', get: r => r.start ? +r.start : 0, desc: true },
+      { key: 'end', label: 'Until', get: r => r.end ? +r.end : Infinity },
+      { key: 'last', label: 'Last successful sign-in', get: r => r.lastSignIn ? +r.lastSignIn : 0, desc: true },
+    ];
+    sortHeader($('disHead'), cols, disSort, renderDisabled);
+    const body = $('disBody'); body.replaceChildren();
+    sortBy(rows, cols, disSort).forEach(r => {
+      const tr = el('tr', r.priv ? 'priv' : '');
+      const role = el('td'); role.append(document.createTextNode(r.role)); if (r.priv) role.append(el('span', 'privtag', 'Privileged'));
+      if (r.scope && r.scope !== '/') role.append(el('div', 'muted', `scope ${r.scope}`));
+      const who = el('td', 'name'); who.append(el('div', '', r.name), el('div', 'upn', r.upn));
+      tr.append(role, who, el('td', '', r.source), el('td', 'nowrap', r.start ? fmtD(r.start) : '—'), el('td', 'nowrap', r.end ? fmtD(r.end) : 'no end'),
+        el('td', 'nowrap' + (r.lastSignIn ? '' : ' muted'), r.lastSignIn ? fmtD(r.lastSignIn) : 'unknown'));
+      body.append(tr);
+    });
+    if (!rows.length) { const tr = el('tr'); const td = el('td', 'muted', 'None.'); td.colSpan = cols.length; tr.append(td); body.append(tr); }
+  }
+
   function renderBanners() {
     const b = $('banners'); b.replaceChildren();
     const add = (msg) => { const d = el('div', 'banner'); d.append(el('span', 'ico', '!'), el('div', '', msg)); b.append(d); };
@@ -805,7 +861,7 @@
     const ids = new Set(users.map(u => u.id));
     const acts = ACTIONS.filter(a => ids.has(a.userId));
     renderBanners(); renderTiles(users, acts); renderAssess(acts); renderHeat(acts); renderOver(acts);
-    renderAdmins(users); renderWindows(users); renderActions(acts, users); renderUnmapped(acts);
+    renderDisabled(); renderAdmins(users); renderWindows(users); renderActions(acts, users); renderUnmapped(acts);
   }
 
   function exportRows() {
@@ -871,7 +927,7 @@
       { n: 'Break Glass 1', u: 'bg1', standing: [GA], tasks: [], k: 0 },
       { n: 'Liam Reid', u: 'liam.reid', standing: [], elig: [GA, 'User Administrator'], act: ['User Administrator', 3, 5], act2: [GA, 1, 3], tasks: ['Add user', 'Update user', 'Admin registered security info', 'Add member to group'] },
     ];
-    const head = ['RecordType', 'UserId', 'UserPrincipalName', 'UserDisplayName', 'ActivityDateTime', 'Activity', 'Category', 'Service', 'Result', 'TargetName', 'TargetType', 'TargetId', 'RequiredPermissions', 'Assessment', 'AssessmentDetail', 'ActiveRoles', 'HighestActiveRole', 'RoleUsed', 'CoveringRoles', 'LeastPrivilegedRoles', 'CandidateRoles', 'RoleName', 'RoleId', 'RoleIsPrivileged', 'AssignmentSource', 'Scope', 'WindowStart', 'WindowEnd', 'ActionsInWindow', 'ActionsCoveredByRole', 'WindowVerdict', 'SuggestedRoles', 'RoleIsBuiltIn', 'PrivilegeScore', 'PimDataAvailable', 'PeriodStartUtc', 'ReportGeneratedUtc'];
+    const head = ['RecordType', 'UserId', 'UserPrincipalName', 'UserDisplayName', 'ActivityDateTime', 'Activity', 'Category', 'Service', 'Result', 'TargetName', 'TargetType', 'TargetId', 'RequiredPermissions', 'Assessment', 'AssessmentDetail', 'ActiveRoles', 'HighestActiveRole', 'RoleUsed', 'CoveringRoles', 'LeastPrivilegedRoles', 'CandidateRoles', 'RoleName', 'RoleId', 'RoleIsPrivileged', 'AssignmentSource', 'Scope', 'WindowStart', 'WindowEnd', 'ActionsInWindow', 'ActionsCoveredByRole', 'WindowVerdict', 'SuggestedRoles', 'RoleIsBuiltIn', 'PrivilegeScore', 'PimDataAvailable', 'PimHistoryAvailable', 'LastSuccessfulSignIn', 'PeriodStartUtc', 'ReportGeneratedUtc'];
     const rows = [];
     const row = (o) => rows.push(head.map(h => o[h] ?? ''));
     const common = { PimDataAvailable: 'True', PeriodStartUtc: iso(start), ReportGeneratedUtc: iso(now) };
@@ -927,6 +983,15 @@
       });
       (p.elig || []).forEach(r => row({ ...common, RecordType: 'RoleWindow', UserId: id, UserPrincipalName: upn, UserDisplayName: p.n, RoleName: r, RoleIsPrivileged: R[r][1] ? 'True' : 'False', AssignmentSource: 'Eligible (PIM)', Scope: '/', WindowStart: '2025-06-01T00:00:00Z', WindowVerdict: 'Eligible', PrivilegeScore: R[r][0] }));
     }
+    [['Former Admin', 'former.admin', GA, 'Active (permanent)', '2023-02-01', '2026-03-14'],
+     ['Contractor Jo', 'jo.contractor', 'Privileged Role Administrator', 'Eligible (PIM)', '2025-06-01', '2026-07-30'],
+     ['Leaver Sam', 'sam.leaver', 'User Administrator', 'Active (permanent) via group Tier1 Admins', '2024-01-10', '2026-09-02'],
+     ['Leaver Sam', 'sam.leaver', 'Groups Administrator', 'Eligible (PIM)', '2024-01-10', '2026-09-02'],
+     ['Old Helpdesk', 'old.helpdesk', 'License Administrator', 'Active (permanent)', '2022-05-01', ''],
+     ['Break Glass 2 (retired)', 'bg2', GA, 'Active (permanent)', '2021-01-01', '2025-11-30']].forEach(([n, u, role, src, since, last]) =>
+      row({ ...common, RecordType: 'DisabledRoleHolder', UserId: 'd-' + u, UserPrincipalName: u + '@contoso.com', UserDisplayName: n, RoleName: role,
+        RoleIsPrivileged: R[role][1] ? 'True' : 'False', AssignmentSource: src, Scope: '/', WindowStart: since + 'T00:00:00Z', PrivilegeScore: R[role][0],
+        LastSuccessfulSignIn: last ? last + 'T08:00:00Z' : '' }));
     Object.entries(R).forEach(([n, [s, pv]]) => row({ ...common, RecordType: 'Role', RoleName: n, RoleIsPrivileged: pv ? 'True' : 'False', RoleIsBuiltIn: 'True', PrivilegeScore: s }));
     const esc = (v) => { v = String(v); return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
     return [head, ...rows].map(r => r.map(esc).join(',')).join('\r\n');

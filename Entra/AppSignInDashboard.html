@@ -25,6 +25,7 @@
     --good: #0ca30c;
     --warning: #fab219;
     --serious: #ec835a;
+    --neutral-mark: #c3c2b7;
     --critical: #d03b3b;
     --critical-text: #b42f2f;
     --accent-wash: rgba(42,120,214,0.10);
@@ -109,7 +110,7 @@
   .filters input[type=search] { min-width: 220px; flex: 1 1 220px; max-width: 360px; }
 
   /* Tiles */
-  .tiles { display: grid; grid-template-columns: minmax(200px, 1.2fr) repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tiles { display: grid; grid-template-columns: minmax(180px, 1.2fr) repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
   .tile { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
   .tile:hover { background: var(--surface-2); }
   .tile[aria-pressed="true"] { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); background: var(--accent-wash); }
@@ -169,6 +170,12 @@
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
   td.owners { min-width: 220px; max-width: 380px; }
+  td.creds { min-width: 220px; max-width: 320px; font-size: 12px; }
+  td.creds .exp { color: var(--critical-text, #b42f2f); }
+  td.creds .soon { color: var(--serious-text, #a8461e); font-weight: 600; }
+  td.recent { min-width: 240px; max-width: 360px; font-size: 12px; }
+  td.recent .who { color: var(--ink); }
+  td.recent .meta { color: var(--muted); }
   td.name { min-width: 160px; }
   td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
   tr:last-child td { border-bottom: 0; }
@@ -266,6 +273,14 @@
       <div class="owner-rows" id="rowsOwners"></div>
     </section>
 
+    <section class="card" style="margin-bottom:12px" id="credCard">
+      <h2>Credential expiry</h2>
+      <p class="card-sub">When each app's next client secret or certificate expires (app registrations and enterprise apps, e.g. SAML signing certificates). Click a part to list those apps.</p>
+      <ul class="legend" id="lgCreds"></ul>
+      <div class="seg" id="segCreds" role="group" aria-label="Credential expiry breakdown"></div>
+      <div class="owner-rows" id="rowsCreds"></div>
+    </section>
+
     <section class="card">
       <div class="table-head">
         <div>
@@ -289,6 +304,7 @@
     <footer>
       <p>“Never signed in” means the sign-in activity report has no record for the app. That report only covers a limited history, and apps created recently may not have been used yet; check the Created column.</p>
       <p>App registrations take the sign-in activity of their enterprise app (service principal) in this tenant. App registrations with no enterprise app here show as never signed in.</p>
+      <p>Recent users come from the sign-in logs (last 30 days at most): the most recent distinct users who signed in successfully, interactively or not, to the app or to it as an API. Apps with no user sign-ins in that period have none listed.</p>
     </footer>
   </main>
 </div>
@@ -307,7 +323,16 @@
     { key: 'never',    label: 'Never signed in' },
     { key: 'noOwners', label: 'No owners' },
     { key: 'disabled', label: 'Disabled owner(s)' },
-    { key: 'stale',    label: 'Unused' }   // label completed with threshold
+    { key: 'stale',    label: 'Unused' },  // label completed with threshold
+    { key: 'credExpired',  label: 'Expired credential(s)' },
+    { key: 'credExpiring', label: 'Credential expiring soon' }
+  ];
+  const CREDS = [
+    { key: 'expired', label: 'All credentials expired', color: 'var(--critical)', ink: '#ffffff' },
+    { key: 'soon',    label: 'Expiring soon',           color: 'var(--serious)',  ink: '#ffffff' },
+    { key: 'q',       label: 'Expiring in 31-90 days',  color: 'var(--warning)',  ink: '#0b0b0b' },
+    { key: 'ok',      label: 'More than 90 days left',  color: 'var(--good)',     ink: '#ffffff' },
+    { key: 'none',    label: 'No credentials',          color: 'var(--neutral-mark)', ink: '#0b0b0b' }
   ];
   const TYPES = [
     { key: 'AppRegistration', label: 'App registrations', color: 'var(--series-1)' },
@@ -391,6 +416,8 @@
       source: sourceName,
       reportDate,
       hasOwnerStatus: cols.includes('DisabledOwnerCount'),
+      hasCreds: cols.includes('CredentialStatus'),
+      hasRecent: cols.includes('RecentUsers'),
       signInAvailable: raw.some(r => bool(r.SignInDataAvailable)) || !cols.includes('SignInDataAvailable'),
     };
     ALL = raw.map((r, i) => {
@@ -420,6 +447,17 @@
         signInAvail: r.SignInDataAvailable === undefined ? true : bool(r.SignInDataAvailable),
         copilot: copilotFromRaw(r),
         copilotSignal: r.CopilotStudioSignal || '',
+        credStatus: r.CredentialStatus || '',
+        credCount: num(r.CredentialCount) || 0,
+        expiredCount: num(r.ExpiredCredentialCount) || 0,
+        nextExpiry: parseDate(r.NextCredentialExpiry),
+        nextExpiryDays: (() => { const d = parseDate(r.NextCredentialExpiry); return d ? Math.floor((d.getTime() - refTime) / DAY) : null; })(),
+        creds: (r.Credentials || '').split(';').map(x => x.trim()).filter(Boolean),
+        recent: (r.RecentUsers || '').split(';').map(x => x.trim()).filter(Boolean).map(x => {
+          const [who, when, type, auth] = x.split('|').map(y => y.trim());
+          return { who, when: parseDate(when), type: type || '', auth: auth || '' };
+        }),
+        recentStatus: r.RecentUsersStatus || '',
         raw: r,
       };
     });
@@ -446,7 +484,17 @@
     if (r.ownerCount === 0) f.push('noOwners');
     if (r.disabledCount > 0) f.push('disabled');
     if (r.days != null && r.days > staleDays()) f.push('stale');
+    if (r.expiredCount > 0) f.push('credExpired');
+    if (r.credStatus === 'Expiring soon') f.push('credExpiring');
     return f;
+  }
+  function credBucket(r) {
+    if (!META.hasCreds) return 'unknown';
+    if (!r.credCount) return 'none';
+    if (r.credStatus === 'All expired') return 'expired';
+    if (r.credStatus === 'Expiring soon') return 'soon';
+    if (r.nextExpiryDays != null && r.nextExpiryDays <= 90) return 'q';
+    return 'ok';
   }
   function bucketOf(r) {
     if (!r.last) return 'never';
@@ -490,6 +538,7 @@
         case 'any':     return flags(r).length > 0;
         case 'bucket':  return bucketOf(r) === focus.value;
         case 'owner':   return r.ownership === focus.value;
+        case 'cred':    return credBucket(r) === focus.value;
       }
       return true;
     });
@@ -662,6 +711,41 @@
     dataTable($('tbFindings'), ['Finding', ...types.map(t => t.label)], data.map(d => [d.label, ...d.vals.map(v => fmtInt.format(v))]));
   }
 
+  // ------------------------------------------------- credential expiry ----
+  function renderCredentials(rows) {
+    $('credCard').classList.toggle('hidden', !META.hasCreds);
+    if (!META.hasCreds) return;
+    const total = rows.length || 1;
+    legend($('lgCreds'), CREDS.map(c => ({ label: c.label, color: c.color })));
+    const seg = $('segCreds'); seg.replaceChildren();
+    const rowsEl = $('rowsCreds'); rowsEl.replaceChildren();
+    CREDS.forEach(c => {
+      const n = rows.filter(r => credBucket(r) === c.key).length;
+      const share = n / total * 100;
+      const act = () => setFocus({ kind: 'cred', value: c.key, label: `Credentials: ${c.label}` });
+      if (n) {
+        const d = document.createElement('div');
+        d.style.flex = `${n} 1 0`; d.style.background = c.color; d.style.color = c.ink;
+        d.tabIndex = 0; d.setAttribute('role', 'button');
+        d.setAttribute('aria-label', `${c.label}: ${n} apps, ${share.toFixed(0)}%`);
+        if (focus && focus.kind === 'cred' && focus.value !== c.key) d.classList.add('dim');
+        const label = `${Math.round(share)}%`;
+        requestAnimationFrame(() => { if (d.clientWidth >= label.length * 8 + 16) d.textContent = label; });
+        const tipFn = (e) => showTip(e, `${fmtInt.format(n)} apps · ${share.toFixed(1)}%`, c.label, c.color, 'click to list');
+        d.addEventListener('pointermove', tipFn); d.addEventListener('focus', tipFn);
+        d.addEventListener('pointerleave', hideTip); d.addEventListener('blur', hideTip);
+        d.addEventListener('click', act);
+        d.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } });
+        seg.append(d);
+      }
+      const sw = document.createElement('span'); sw.style.cssText = `width:10px;height:10px;border-radius:2px;background:${c.color}`;
+      const nm = document.createElement('span'); nm.textContent = c.label;
+      const num_ = document.createElement('span'); num_.className = 'num'; num_.textContent = fmtInt.format(n);
+      const p = document.createElement('span'); p.className = 'pct'; p.textContent = `${share.toFixed(1)}%`;
+      rowsEl.append(sw, nm, num_, p);
+    });
+  }
+
   // --------------------------------------------------- ownership bar -------
   function renderOwnership(rows) {
     const total = rows.length || 1;
@@ -713,6 +797,10 @@
         meta: META.hasOwnerStatus ? `${fmtInt.format(allDis)} with every owner disabled` : 're-run script for status',
         f: { kind: 'finding', value: 'disabled', label: 'Disabled owner(s)' } },
       { label: staleLabel(), value: n('stale'), meta: pct(n('stale')), f: { kind: 'finding', value: 'stale', label: staleLabel() } },
+      { label: 'Expired credentials', value: META.hasCreds ? n('credExpired') : '–', meta: META.hasCreds ? `${fmtInt.format(rows.filter(r => credBucket(r) === 'expired').length)} with every credential expired` : 're-run script for credentials',
+        f: { kind: 'finding', value: 'credExpired', label: 'Expired credential(s)' } },
+      { label: 'Credential expiring soon', value: META.hasCreds ? n('credExpiring') : '–', meta: META.hasCreds ? 'renew before it lapses' : 're-run script for credentials',
+        f: { kind: 'finding', value: 'credExpiring', label: 'Credential expiring soon' } },
     ];
     defs.forEach(d => {
       const b = document.createElement('button');
@@ -741,9 +829,11 @@
     { key: 'method',   label: 'Method',      get: r => r.method },
     { key: 'created',  label: 'Created',     get: r => r.created ? r.created.getTime() : -1 },
     { key: 'owners',   label: 'Owners',      get: r => r.ownerCount },
+    { key: 'creds',    label: 'Credentials (next expiry)', get: r => r.credCount ? (r.credStatus === 'All expired' ? -1e9 : r.nextExpiryDays ?? 1e9) : 2e9 },
+    { key: 'recent',   label: 'Recent users', get: r => r.recent.length && r.recent[0].when ? r.recent[0].when.getTime() : -1 },
     { key: 'appId',    label: 'App ID',      get: r => r.appId },
   ];
-  const FLAG_LABEL = { never: 'Never signed in', noOwners: 'No owners', disabled: 'Disabled owner', stale: null };
+  const FLAG_LABEL = { never: 'Never signed in', noOwners: 'No owners', disabled: 'Disabled owner', stale: null, credExpired: 'Expired credential', credExpiring: 'Credential expiring soon' };
 
   function renderTable(rows) {
     const head = $('thead'); head.replaceChildren();
@@ -792,6 +882,29 @@
         tO.append(d);
       });
       if (r.owners.length > 5) { const d = document.createElement('div'); d.className = 'muted'; d.textContent = `+${r.owners.length - 5} more`; tO.append(d); }
+      const tC = td('creds');
+      if (!META.hasCreds) { tC.textContent = 'n/a'; tC.classList.add('muted'); }
+      else if (!r.credCount) { tC.textContent = 'None'; tC.classList.add('muted'); }
+      else {
+        const head = document.createElement('div');
+        head.className = r.credStatus === 'All expired' ? 'exp' : r.credStatus === 'Expiring soon' ? 'soon' : '';
+        head.textContent = r.credStatus === 'All expired' ? 'All expired'
+          : r.nextExpiry ? `Next: ${fmtDate(r.nextExpiry)}${r.nextExpiryDays != null ? ` (${r.nextExpiryDays} days)` : ''}` : 'No expiry date';
+        tC.append(head);
+        r.creds.slice(0, 4).forEach(c => { const d = document.createElement('div'); d.className = /\[expired\]$/.test(c) ? 'exp' : 'muted'; d.textContent = c.replace(/\s*\[expired\]$/, ' (expired)'); tC.append(d); });
+        if (r.creds.length > 4) { const d = document.createElement('div'); d.className = 'muted'; d.textContent = `+${r.creds.length - 4} more`; tC.append(d); }
+      }
+      const tR = td('recent');
+      if (!META.hasRecent) { tR.textContent = 'n/a'; tR.classList.add('muted'); }
+      else if (!r.recent.length) { tR.textContent = r.recentStatus || 'None'; tR.classList.add('muted'); }
+      else r.recent.forEach(u => {
+        const d = document.createElement('div');
+        const w = document.createElement('span'); w.className = 'who'; w.textContent = u.who.replace(/\s*<[^>]*>$/, '');
+        w.title = u.who;
+        const m = document.createElement('span'); m.className = 'meta';
+        m.textContent = ` · ${u.when ? fmtDate(u.when) : ''}${u.type ? ' · ' + u.type : ''}${u.auth ? ' · ' + u.auth : ''}`;
+        d.append(w, m); tR.append(d);
+      });
       td('mono').textContent = r.appId;
       frag.append(tr);
     });
@@ -829,6 +942,7 @@
     renderRecency(rows);
     renderFindings(rows);
     renderOwnership(rows);
+    renderCredentials(rows);
     const list = applyFocus(rows);
     $('tblTitle').textContent = focus ? focus.label : 'All applications in view';
     $('tblSub').textContent = `${fmtInt.format(list.length)} of ${fmtInt.format(rows.length)} apps`;
@@ -871,7 +985,7 @@
     const people = ['Alex Morgan', 'Sam Patel', 'Jordan Lee', 'Chris Nolan', 'Priya Shah', 'Taylor Brooks', 'Robin Chen', 'Jamie Fox', 'Casey Wong', 'Drew Evans', 'Morgan Diaz', 'Riley Kim'];
     const disabledPeople = new Set(['Chris Nolan', 'Jamie Fox', 'Drew Evans']);
     const methods = ['Delegated (client)', 'Delegated (resource)', 'App-only (client)', 'App-only (resource)'];
-    const head = ['ObjectType', 'DisplayName', 'AppId', 'ObjectId', 'CreatedDateTime', 'LastSignIn', 'LastSignInType', 'DaysSinceLastSignIn', 'OwnerCount', 'Owners', 'EnabledOwnerCount', 'DisabledOwnerCount', 'DisabledOwners', 'AllOwnersDisabled', 'ServicePrincipalType', 'AccountEnabled', 'SignInAudience', 'PublisherTenantId', 'SignInDataAvailable', 'ReportGeneratedUtc', 'Tags', 'IsCopilotStudio', 'CopilotStudioSignal'];
+    const head = ['ObjectType', 'DisplayName', 'AppId', 'ObjectId', 'CreatedDateTime', 'LastSignIn', 'LastSignInType', 'DaysSinceLastSignIn', 'OwnerCount', 'Owners', 'EnabledOwnerCount', 'DisabledOwnerCount', 'DisabledOwners', 'AllOwnersDisabled', 'ServicePrincipalType', 'AccountEnabled', 'SignInAudience', 'PublisherTenantId', 'SignInDataAvailable', 'ReportGeneratedUtc', 'Tags', 'IsCopilotStudio', 'CopilotStudioSignal', 'CredentialCount', 'SecretCount', 'CertificateCount', 'ExpiredCredentialCount', 'NextCredentialExpiry', 'CredentialStatus', 'Credentials', 'RecentUsers', 'LastUserSignIn', 'RecentUsersStatus'];
     const guid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.floor(rnd() * 16); return (c === 'x' ? r : (r & 3) | 8).toString(16); });
     const rows = [];
     const make = (type, name, copilot) => {
@@ -887,14 +1001,42 @@
       const own = []; while (own.length < nOwn) { const p = pick(people); if (!own.includes(p)) own.push(p); }
       const fmt = own.map(p => `${p} <${p.toLowerCase().replace(' ', '.')}@contoso.com>${disabledPeople.has(p) ? ' [disabled]' : ''}`);
       const dis = own.filter(p => disabledPeople.has(p));
-      rows.push([type, name, guid(), guid(), iso(created), last ? iso(last) : '', last ? pick(methods) : '',
+      method = last ? pick(methods) : '';
+      rows.push([type, name, guid(), guid(), iso(created), last ? iso(last) : '', method,
         last ? String(Math.floor((now - last) / DAY)) : '', String(own.length), fmt.join('; '),
         String(own.length - dis.length), String(dis.length), fmt.filter(f => f.endsWith('[disabled]')).join('; '),
         own.length && dis.length === own.length ? 'True' : 'False',
         type === 'EnterpriseApp' ? 'Application' : '', type === 'EnterpriseApp' ? (rnd() < 0.08 ? 'False' : 'True') : '',
         pick(['AzureADMyOrg', 'AzureADMultipleOrgs']), type === 'EnterpriseApp' && rnd() < 0.5 ? guid() : 'contoso-tenant', 'True', iso(now),
         copilot && type === 'EnterpriseApp' ? `AgentCreatedBy:CopilotStudio; power-virtual-agents-${guid()}` : '',
-        copilot ? 'True' : 'False', copilot ? 'Tag: AgentCreatedBy:CopilotStudio' + (type === 'EnterpriseApp' ? '' : ' (on enterprise app)') : '']);
+        copilot ? 'True' : 'False', copilot ? 'Tag: AgentCreatedBy:CopilotStudio' + (type === 'EnterpriseApp' ? '' : ' (on enterprise app)') : '',
+        ...sampleCreds(type, created), ...sampleRecent(last, method)]);
+    };
+    const users = ['Alex Morgan', 'Sam Patel', 'Jordan Lee', 'Priya Shah', 'Taylor Brooks', 'Robin Chen', 'Casey Wong', 'Morgan Diaz', 'Riley Kim', 'Hana Ito', 'Omar Haddad', 'Lena Novak'];
+    let method = '';
+    const sampleCreds = (type, created) => {
+      const n = type === 'EnterpriseApp' ? (rnd() < 0.75 ? 0 : 1) : (rnd() < 0.3 ? 0 : 1 + Math.floor(rnd() * 3));
+      const creds = [];
+      for (let k = 0; k < n; k++) {
+        const cert = type === 'EnterpriseApp' || rnd() < 0.3;
+        const r = rnd();
+        const end = now + (r < 0.22 ? -(10 + rnd() * 500) : r < 0.32 ? rnd() * 30 : r < 0.42 ? 31 + rnd() * 59 : 91 + rnd() * 700) * DAY;
+        creds.push({ kind: cert ? 'Certificate' : 'Secret', name: cert ? (type === 'EnterpriseApp' ? 'SAML signing' : 'CN=' + guid().slice(0, 8)) : pick(['prod', 'ci-pipeline', 'old', 'temp', 'legacy']), end });
+      }
+      creds.sort((a, b) => a.end - b.end);
+      const valid = creds.filter(c => c.end > now), expired = creds.filter(c => c.end <= now);
+      const next = valid[0];
+      const status = !creds.length ? 'No credentials' : !valid.length ? 'All expired' : next.end <= now + 30 * DAY ? 'Expiring soon' : 'OK';
+      return [String(creds.length), String(creds.filter(c => c.kind === 'Secret').length), String(creds.filter(c => c.kind === 'Certificate').length), String(expired.length),
+        next ? iso(next.end) : '', status, creds.map(c => `${c.kind} '${c.name}' expires ${iso(c.end).slice(0, 10)}${c.end <= now ? ' [expired]' : ''}`).join('; ')];
+    };
+    const sampleRecent = (last, m) => {
+      const delegated = last && /Delegated/.test(m) && now - last < 30 * DAY;
+      if (!delegated) return ['', '', 'No user sign-ins in the last 30 days'];
+      const k = 1 + Math.floor(rnd() * 5), picked = [];
+      let t = last;
+      while (picked.length < k) { const u = pick(users); if (!picked.some(p => p.u === u)) { picked.push({ u, t }); t -= rnd() * 4 * DAY; } }
+      return [picked.map(p => `${p.u} <${p.u.toLowerCase().replace(' ', '.')}@contoso.com> | ${iso(p.t)} | ${rnd() < 0.6 ? 'interactive' : 'non-interactive'} | ${rnd() < 0.8 ? 'MFA' : 'single-factor'}`).join('; '), iso(picked[0].t), 'OK'];
     };
     for (let i = 0; i < 140; i++) make('AppRegistration', `${pick(words)}${rnd() < 0.5 ? ' ' + pick(['Dev', 'Test', 'Prod', 'UAT', 'v2']) : ''}`);
     const bots = ['HR Helper', 'IT Help Desk Agent', 'Benefits FAQ', 'Onboarding Buddy', 'Sales Assistant', 'Policy Bot', 'Travel Agent', 'Facilities Bot', 'Store Ops Copilot', 'Leave Requests Bot', 'Procurement Helper', 'Wiki Q&A', 'Test Agent', 'Copilot Agent 1', 'Copilot Agent 2', 'Demo bot'];
