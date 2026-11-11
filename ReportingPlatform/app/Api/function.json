@@ -5,9 +5,23 @@
       "type": "httpTrigger",
       "direction": "in",
       "authLevel": "anonymous",
-      "methods": [ "get" ],
+      "methods": [
+        "get",
+        "post"
+      ],
       "route": "api/reports/{id?}/{action?}/{date?}"
     },
-    { "name": "Response", "type": "http", "direction": "out" }
+    {
+      "name": "Response",
+      "type": "http",
+      "direction": "out"
+    },
+    {
+      "name": "RunRequest",
+      "type": "queue",
+      "direction": "out",
+      "queueName": "report-runs",
+      "connection": "AzureWebJobsStorage"
+    }
   ]
 }

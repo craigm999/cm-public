@@ -10,7 +10,7 @@
 
         latest/<id>.csv              most recent successful run
         history/<id>/<yyyy-MM-dd>.csv one per day (a re-run on the same day replaces it)
-        status/<id>.json             outcome of the last run (success or failure)
+        status/<id>.json             last run: queued / running / succeeded / failed
 
     App settings used:
         AZURE_CLIENT_ID          client ID of the user-assigned managed identity
@@ -125,19 +125,69 @@ function Get-ReportBlobList {
 
 #region Scheduled runs ----------------------------------------------------------
 
+$script:RunTimeoutHours = 2   # host.json functionTimeout: a 'running' status older than this is stale
+
+function Get-StatusValue($Status, [string]$Name) {
+    if ($null -eq $Status) { return $null }
+    $p = $Status.PSObject.Properties[$Name]
+    if ($p) { return $p.Value }
+    return $null
+}
+
+function Get-ReportStatus {
+    <# The report's status/<id>.json, or $null. #>
+    param([Parameter(Mandatory)][string]$Id)
+    $blob = Get-ReportBlob -Path "status/$Id.json"
+    if ($blob.StatusCode -ne 200) { return $null }
+    try { return ($blob.Content | ConvertFrom-Json) } catch { return $null }
+}
+
+function Test-ReportBusy {
+    <# True while a run is queued or in progress (ignoring stale entries from runs that were cut off). #>
+    param($Status)
+    $result = [string](Get-StatusValue $Status 'result')
+    if ($result -notin 'queued', 'running') { return $false }
+    $since = [string](Get-StatusValue $Status $(if ($result -eq 'queued') { 'requested' } else { 'started' }))
+    $t = [datetime]::MinValue
+    $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+    if (-not [datetime]::TryParse($since, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$t)) { return $false }
+    return ([datetime]::UtcNow - $t).TotalHours -lt $script:RunTimeoutHours
+}
+
+function Set-ReportQueued {
+    <# Marks a report as queued for an on-demand run. Keeps the last run's details under 'previous'. #>
+    param([Parameter(Mandatory)][string]$Id, [string]$RequestedBy, $Current)
+    $prev = $Current
+    if ($prev -and (Get-StatusValue $prev 'result') -in 'queued', 'running') { $prev = Get-StatusValue $prev 'previous' }
+    $status = [ordered]@{ id = $Id; result = 'queued'; trigger = 'manual'; requested = [datetime]::UtcNow.ToString('o'); requestedBy = $RequestedBy; previous = $prev }
+    Send-ReportBlob -Path "status/$Id.json" -Text ($status | ConvertTo-Json -Depth 6) -ContentType 'application/json'
+    return $status
+}
+
 function Invoke-ScheduledReport {
     <#
         Runs a registered report script as the managed identity and stores the result.
-        Writes status/<id>.json whether it succeeds or fails; a failure keeps the previous
-        latest/<id>.csv in place.
+        Writes status/<id>.json when it starts ('running') and when it ends, whether it succeeds
+        or fails; a failure keeps the previous latest/<id>.csv in place. Skips the run if
+        another run of the same report is already in progress.
     #>
-    param([Parameter(Mandatory)][string]$Id)
+    param([Parameter(Mandatory)][string]$Id, [ValidateSet('schedule', 'manual')][string]$Trigger = 'schedule', [string]$RequestedBy)
     $ProgressPreference = 'SilentlyContinue'
     $def = Get-ReportDefinition -Id $Id
+    $current = try { Get-ReportStatus -Id $Id } catch { $null }
+    if ((Get-StatusValue $current 'result') -eq 'running' -and (Test-ReportBusy $current)) {
+        Write-Warning "[$Id] Already running since $(Get-StatusValue $current 'started'); skipping this $Trigger run."
+        return
+    }
     $started = [datetime]::UtcNow
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "$Id-$([guid]::NewGuid()).csv"
     $warnings = @()
-    $status = [ordered]@{ id = $Id; started = $started.ToString('o'); finished = $null; result = 'running'; durationSeconds = $null; rows = $null; bytes = $null; warnings = @(); error = $null }
+    $previous = if ((Get-StatusValue $current 'result') -in 'queued', 'running') { Get-StatusValue $current 'previous' } else { $current }
+    $status = [ordered]@{ id = $Id; trigger = $Trigger; requestedBy = $(if ($RequestedBy) { $RequestedBy } else { $null }); started = $started.ToString('o'); finished = $null; result = 'running'
+        durationSeconds = $null; rows = $null; bytes = $null; warnings = @(); error = $null; previous = $previous }
+    try { Send-ReportBlob -Path "status/$Id.json" -Text ($status | ConvertTo-Json -Depth 6) -ContentType 'application/json' }
+    catch { Write-Warning "[$Id] Couldn't write run status: $($_.Exception.Message)" }
+    $status.Remove('previous')
     try {
         $script = Join-Path (Get-AppRoot) (Join-Path 'scripts' $def.script)
         $params = @{}
@@ -225,4 +275,5 @@ function New-HttpResponse {
 #endregion
 
 Export-ModuleMember -Function Get-AppRoot, Get-ReportRegistry, Get-ReportDefinition, Get-ManagedIdentityToken,
-    Send-ReportBlob, Get-ReportBlob, Get-ReportBlobList, Invoke-ScheduledReport, Get-RequestPrincipal, New-HttpResponse, Get-HeaderValue
+    Send-ReportBlob, Get-ReportBlob, Get-ReportBlobList, Invoke-ScheduledReport, Get-RequestPrincipal, New-HttpResponse, Get-HeaderValue,
+    Get-ReportStatus, Test-ReportBusy, Set-ReportQueued

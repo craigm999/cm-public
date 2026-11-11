@@ -1,5 +1,5 @@
 <#
-    Report data API (read-only). Authentication is enforced by App Service authentication;
+    Report data API. Authentication is enforced by App Service authentication;
     authLevel is anonymous so the platform sign-in is the only gate, and every request is
     checked again here for an authenticated Entra principal.
 
@@ -7,6 +7,7 @@
       GET /api/reports/{id}/latest                latest CSV
       GET /api/reports/{id}/history               dates with a stored run
       GET /api/reports/{id}/history/{yyyy-MM-dd}  CSV from that day
+      POST /api/reports/{id}/run                  queue an on-demand run (needs header X-Requested-With)
 #>
 using namespace System.Net
 param($Request, $TriggerMetadata)
@@ -26,6 +27,22 @@ $date = [string]$Request.Params.date
 
 try {
     $registry = Get-ReportRegistry
+    $method = ([string]$Request.Method).ToUpperInvariant()
+
+    if ($method -eq 'POST') {
+        if (-not $id -or $action -ne 'run' -or $date) { Send 404 (@{ error = 'Unknown action.' } | ConvertTo-Json); return }
+        # Only the portal's own script sends this header; a cross-site form post can't (CSRF protection).
+        if (-not (Get-HeaderValue $Request.Headers 'X-Requested-With')) { Send 403 (@{ error = 'Missing X-Requested-With header.' } | ConvertTo-Json); return }
+        if (-not ($registry | Where-Object { $_.id -eq $id })) { Send 404 (@{ error = 'Unknown report.' } | ConvertTo-Json); return }
+        $current = Get-ReportStatus -Id $id
+        if (Test-ReportBusy $current) { Send 409 (@{ error = 'This report is already queued or running.'; status = $current } | ConvertTo-Json -Depth 6); return }
+        $queued = Set-ReportQueued -Id $id -RequestedBy $principal.Name -Current $current
+        Push-OutputBinding -Name RunRequest -Value (@{ id = $id; requestedBy = $principal.Name; requested = $queued.requested } | ConvertTo-Json -Compress)
+        Write-Host "[$id] Run requested by $($principal.Name)"
+        Send 202 (@{ queued = $true; status = $queued } | ConvertTo-Json -Depth 6)
+        return
+    }
+    if ($method -and $method -ne 'GET') { Send 405 (@{ error = 'Method not allowed.' } | ConvertTo-Json); return }
 
     if (-not $id) {
         $reports = foreach ($r in $registry) {

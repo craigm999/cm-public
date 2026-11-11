@@ -6,5 +6,6 @@
     Description       = 'Shared helpers for the Entra / Azure reporting Function App.'
     PowerShellVersion = '7.4'
     FunctionsToExport = @('Get-AppRoot', 'Get-ReportRegistry', 'Get-ReportDefinition', 'Get-ManagedIdentityToken', 'Send-ReportBlob',
-                          'Get-ReportBlob', 'Get-ReportBlobList', 'Invoke-ScheduledReport', 'Get-RequestPrincipal', 'New-HttpResponse', 'Get-HeaderValue')
+                          'Get-ReportBlob', 'Get-ReportBlobList', 'Invoke-ScheduledReport', 'Get-RequestPrincipal', 'New-HttpResponse', 'Get-HeaderValue',
+                          'Get-ReportStatus', 'Test-ReportBusy', 'Set-ReportQueued')
 }

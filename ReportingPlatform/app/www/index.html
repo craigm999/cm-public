@@ -48,13 +48,19 @@
   nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
   nav.tabs button:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--neutral); flex: none; }
-  .dot.succeeded { background: var(--good); } .dot.failed { background: var(--critical); } .dot.running { background: var(--warning); }
+  .dot.succeeded { background: var(--good); } .dot.failed { background: var(--critical); } .dot.running, .dot.queued { background: var(--warning); }
+  .dot.running, .dot.queued { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .dot.running, .dot.queued { animation: none; } }
   .toolbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 16px; }
   .toolbar .bar { min-height: 36px; gap: 8px 16px; font-size: 13px; color: var(--ink-2); }
   .toolbar .desc { margin-right: auto; }
   .status { display: inline-flex; align-items: center; gap: 6px; }
   .toolbar select, .toolbar a.btn { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; text-decoration: none; }
-  .toolbar a.btn:hover { background: var(--surface-2); }
+  .toolbar a.btn:hover, .toolbar button.btn:hover:not(:disabled) { background: var(--surface-2); }
+  .toolbar button.btn { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+  .toolbar button.btn:disabled { color: var(--ink-2); cursor: default; opacity: .7; }
+  .note { width: 100%; color: var(--ink-2); }
   details.warn { width: 100%; }
   details.warn summary { cursor: pointer; color: var(--ink-2); }
   details.warn ul { margin: 6px 0 0; padding-left: 18px; }
@@ -80,6 +86,7 @@
     <span class="status" id="status"></span>
     <label>Run <select id="run" aria-label="Report run"></select></label>
     <a class="btn" id="download" href="#" download>Download CSV</a>
+    <button class="btn" id="runNow" type="button">Run now</button>
     <div id="extra" style="width:100%" class="hidden"></div>
   </div>
 </div>
@@ -95,6 +102,47 @@
   const frames = new Map();     // id -> iframe
   const runs = new Map();       // id -> selected run ('latest' or date)
   let current = null;
+
+  const isBusy = (s) => !!s && (s.result === 'queued' || s.result === 'running');
+  let pollTimer = null;
+
+  function poll() {
+    clearTimeout(pollTimer);
+    if (!REPORTS.some(r => isBusy(r.status))) return;
+    pollTimer = setTimeout(() => {
+      fetch('/api/reports', { credentials: 'same-origin', cache: 'no-store' })
+        .then(x => x.ok ? x.json() : null)
+        .then(data => {
+          if (!data) return;
+          (data.reports || []).forEach(n => {
+            const r = REPORTS.find(x => x.id === n.id); if (!r) return;
+            const wasBusy = isBusy(r.status);
+            r.status = n.status;
+            // A run just finished: reload its dashboard if it's showing the latest data
+            if (wasBusy && !isBusy(n.status) && frames.has(r.id) && (runs.get(r.id) || 'latest') === 'latest') frames.get(r.id).src = frameUrl(r, 'latest');
+          });
+          renderTabs(); const c = REPORTS.find(x => x.id === current); if (c) renderToolbar(c);
+        })
+        .catch(() => {})
+        .finally(poll);
+    }, 15000);
+  }
+
+  function runNow() {
+    const r = REPORTS.find(x => x.id === current); if (!r || isBusy(r.status)) return;
+    if (!confirm(`Run the ${r.title} report now?\n\nIt runs in the background and can take several minutes. The page updates when it's done.`)) return;
+    const b = $('runNow'); b.disabled = true; b.textContent = 'Queuing…';
+    fetch(`/api/reports/${encodeURIComponent(r.id)}/run`, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(async x => {
+        let body = null; try { body = await x.json(); } catch (_) { /* not JSON */ }
+        if (x.status === 401) { location.href = '/.auth/login/aad?post_login_redirect_uri=' + encodeURIComponent(location.pathname + location.hash); return; }
+        if (body && body.status) r.status = body.status;
+        if (!x.ok && x.status !== 409) alert(`Couldn't queue the run: ${(body && body.error) || x.status + ' ' + x.statusText}`);
+        renderTabs(); if (current === r.id) renderToolbar(r);
+        poll();
+      })
+      .catch(e => { alert(`Couldn't queue the run: ${e.message}`); renderToolbar(r); });
+  }
 
   function dataUrl(r, run) {
     return run && run !== 'latest' ? `/api/reports/${encodeURIComponent(r.id)}/history/${run}` : `/api/reports/${encodeURIComponent(r.id)}/latest`;
@@ -112,7 +160,7 @@
       b.tabIndex = r.id === current ? 0 : -1;
       const d = el('span', `dot ${r.status ? r.status.result : ''}`); d.setAttribute('aria-hidden', 'true');
       b.append(d, document.createTextNode(r.title));
-      b.title = r.status ? `Last run ${r.status.result}, ${fmt(r.status.finished || r.status.started)}` : 'Not run yet';
+      b.title = !r.status ? 'Not run yet' : isBusy(r.status) ? `Run ${r.status.result}` : `Last run ${r.status.result}, ${fmt(r.status.finished || r.status.started)}`;
       b.addEventListener('click', () => select(r.id));
       b.addEventListener('keydown', (e) => {
         const i = REPORTS.findIndex(x => x.id === r.id);
@@ -131,11 +179,16 @@
     const st = $('status'); st.replaceChildren();
     const extra = $('extra'); extra.replaceChildren(); extra.classList.add('hidden');
     const s = r.status;
+    const busy = isBusy(s);
+    const rn = $('runNow'); rn.disabled = busy; rn.textContent = busy ? (s.result === 'queued' ? 'Queued…' : 'Running…') : 'Run now';
+    rn.title = busy ? 'A run is already in progress' : 'Run this report now (in the background; it can take several minutes)';
     if (!s) st.append(el('span', 'dot'), document.createTextNode('Not run yet'));
+    else if (s.result === 'queued') st.append(el('span', 'dot queued'), document.createTextNode(`Queued ${fmt(s.requested)}${s.requestedBy ? ' by ' + s.requestedBy : ''}`));
     else {
       st.append(el('span', `dot ${s.result}`), document.createTextNode(
-        `${s.result === 'succeeded' ? 'Last run' : s.result === 'failed' ? 'Last run failed' : 'Running since'} ${fmt(s.finished || s.started)}` +
-        (s.result === 'succeeded' && s.rows != null ? ` · ${Number(s.rows).toLocaleString()} rows` : '')));
+        `${s.result === 'succeeded' ? 'Last run' : s.result === 'failed' ? 'Last run failed' : 'Running since'} ${fmt(s.result === 'running' ? s.started : s.finished || s.started)}` +
+        (s.result === 'succeeded' && s.rows != null ? ` · ${Number(s.rows).toLocaleString()} rows` : '') +
+        (s.trigger === 'manual' && s.requestedBy ? ` · run by ${s.requestedBy}` : '')));
       if (s.result === 'failed' && s.error) { extra.classList.remove('hidden'); extra.append(el('div', 'error', `Error: ${s.error} (showing the last successful run)`)); }
       if (s.warnings && s.warnings.length) {
         extra.classList.remove('hidden');
@@ -149,7 +202,9 @@
       .then(x => x.ok ? x.json() : { dates: [] })
       .then(h => { if (current !== r.id) return; (h.dates || []).forEach(d => sel.add(new Option(d, d))); sel.value = runs.get(r.id) || 'latest'; })
       .catch(() => {});
-    $('download').classList.toggle('hidden', !s || !s.rows && s.result !== 'succeeded');
+    if (busy) { extra.classList.remove('hidden'); extra.append(el('div', 'note', 'This page updates when the run finishes. The data shown is from the last completed run.')); }
+    const hasData = s && (s.result === 'succeeded' || (s.previous && s.previous.result === 'succeeded') || s.rows);
+    $('download').classList.toggle('hidden', !hasData);
     const dl = $('download'); dl.href = dataUrl(r, runs.get(r.id)); dl.setAttribute('download', `${r.id}${runs.get(r.id) && runs.get(r.id) !== 'latest' ? '-' + runs.get(r.id) : ''}.csv`);
   }
 
@@ -175,6 +230,7 @@
     renderToolbar(r);
   });
   addEventListener('hashchange', () => select(location.hash.slice(1), true));
+  $('runNow').addEventListener('click', runNow);
 
   fetch('/api/reports', { credentials: 'same-origin', cache: 'no-store' })
     .then(r => { if (r.status === 401) { location.href = '/.auth/login/aad?post_login_redirect_uri=' + encodeURIComponent(location.pathname + location.hash); throw new Error('Sign-in required'); } if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.json(); })
@@ -184,6 +240,7 @@
       const out = el('a', '', 'Sign out'); out.href = '/.auth/logout'; u.append(out);
       if (!REPORTS.length) { $('empty').replaceChildren(el('strong', '', 'No reports are configured.')); return; }
       select(location.hash.slice(1), true);
+      poll();
     })
     .catch(e => { const m = $('empty'); m.replaceChildren(el('strong', '', 'Couldn\'t load the report list.'), document.createTextNode(e.message)); });
 })();
