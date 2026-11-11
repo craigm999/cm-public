@@ -51,6 +51,9 @@ param privateDnsZoneIds object = {}
 @description('Client ID of the sign-in app registration.')
 param easyAuthClientId string
 
+@description('Extra CORS origins: the app\'s actual address if it differs from <name>.azurewebsites.net (the deploy script passes it).')
+param additionalAllowedOrigins array = []
+
 @description('Optional: only members of these group object IDs may sign in (needs group claims). The main control is assignment required on the enterprise app.')
 param easyAuthAllowedGroupIds array = []
 
@@ -357,6 +360,12 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
       minTlsVersion: '1.2'
       scmMinTlsVersion: '1.2'
       http20Enabled: true
+      // Browsers send an Origin header on the portal's own POSTs (Run now); the platform rejects
+      // origins not listed here with an empty 403. Only the app's own address is allowed.
+      cors: {
+        allowedOrigins: union(['https://${n.functionApp}.azurewebsites.net'], additionalAllowedOrigins)
+        supportCredentials: false
+      }
     }
     functionAppConfig: {
       // Deployment package storage, accessed with the managed identity (no keys).

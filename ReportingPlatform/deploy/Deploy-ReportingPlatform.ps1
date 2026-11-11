@@ -459,12 +459,19 @@ function Invoke-Preflight($S, $MyRoles, [bool]$IsUser) {
 
 #region Steps -----------------------------------------------------------------------------
 
+function Get-ExtraOrigins($S) {
+    # The app's real address when it isn't <name>.azurewebsites.net (unique default host names)
+    $h = [string](Get-Prop $S.deployed 'functionAppHostName')
+    if ($h -and $h -ne "$((Get-Names $S).functionApp).azurewebsites.net") { "https://$h" }
+}
+
 function Invoke-BicepDeployment($S, [string]$IntegrationSubnetId, [string]$ClientId, [switch]$WhatIfOnly) {
     $params = [ordered]@{
         location = $S.location; namePrefix = $S.namePrefix; environmentName = $S.environmentName; names = $S.names; tags = $S.tags
         privateEndpointSubnetId = $S.network.privateEndpointSubnetId; integrationSubnetId = $IntegrationSubnetId
         privateDnsZoneIds = [ordered]@{}; easyAuthClientId = $ClientId; reportTenantId = $S.tenantId; schedules = $S.schedules
         storageSku = $S.storageSku; logAnalyticsWorkspaceId = $S.monitoring.logAnalyticsWorkspaceId
+        additionalAllowedOrigins = @(Get-ExtraOrigins $S)
     }
     foreach ($k in @($S.network.privateDnsZoneIds.Keys)) { if ($S.network.privateDnsZoneIds[$k]) { $params.privateDnsZoneIds[$k] = $S.network.privateDnsZoneIds[$k] } }
     $file = [System.IO.Path]::GetTempFileName() + '.json'
@@ -785,6 +792,12 @@ $S.deployed = [ordered]@{
 }
 Save-Settings $S
 
+if ($out.functionAppHostName -ne "$($names.functionApp).azurewebsites.net") {
+    Write-Step "Allowing https://$($out.functionAppHostName) in the app's CORS settings..."
+    Invoke-AzRest -Method PATCH -Url "$Arm$($out.functionAppId)/config/web?api-version=2024-04-01" -Body @{
+        properties = @{ cors = @{ allowedOrigins = @("https://$($names.functionApp).azurewebsites.net", "https://$($out.functionAppHostName)"); supportCredentials = $false } }
+    } | Out-Null
+}
 if ($out.functionAppHostName -notin $hostNames) {
     Write-Step "The app's address is $($out.functionAppHostName); updating the sign-in redirect URI..."
     try { Set-SignInApp -ClientId $S.signIn.clientId -DisplayName $S.signIn.displayName -HostNames @($out.functionAppHostName) -ReaderGroupId $S.signIn.readerGroupId | Out-Null }

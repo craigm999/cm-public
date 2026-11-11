@@ -140,7 +140,7 @@
         if (body && body.status) r.status = body.status;
         if (!x.ok && x.status !== 409) {
           const detail = body && body.error ? body.error
-            : `The response didn't come from the reporting app (so the Azure platform or a proxy refused it):\n${text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) || '(empty response)'}`;
+            : `The response didn't come from the reporting app, so the Azure platform or a proxy refused it (an empty 403 usually means the app's CORS settings don't list this site's address):\n${text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) || '(empty response)'}`;
           alert(`Couldn't queue the run (HTTP ${x.status}):\n\n${detail}`);
         }
         renderTabs(); if (current === r.id) renderToolbar(r);
