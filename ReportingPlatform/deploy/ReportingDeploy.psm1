@@ -590,4 +590,8 @@ function Set-TemporaryDeployAccess {
 
 #endregion
 
-Export-ModuleMember -Function * -Variable GraphReadPermissions, EntraRoles, Arm, Graph
+# Only when loaded as a module (Import-Module). If this file is run or dot-sourced directly
+# (e.g. F5 in an editor with this file active), skip it rather than fail.
+if ($ExecutionContext.SessionState.Module) {
+    Export-ModuleMember -Function * -Variable GraphReadPermissions, EntraRoles, Arm, Graph
+}

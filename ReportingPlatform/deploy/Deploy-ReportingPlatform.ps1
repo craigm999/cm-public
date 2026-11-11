@@ -1,3 +1,4 @@
+#Requires -Version 7.4
 <#
 .SYNOPSIS
     Deploys (or updates) the Identity & Azure reporting platform: asks about your environment,

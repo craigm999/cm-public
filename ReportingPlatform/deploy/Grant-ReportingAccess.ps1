@@ -1,3 +1,4 @@
+#Requires -Version 7.4
 <#
 .SYNOPSIS
     The privileged steps of the reporting platform deployment, for an administrator to run
