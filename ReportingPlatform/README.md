@@ -199,6 +199,23 @@ settings file as a secure file, and run `-NonInteractive`. A service principal c
 roles the way a person does, so keep the sign-in app and Graph permission steps with an admin
 (`Grant-ReportingAccess.ps1`).
 
+### If the code upload returns 403
+
+The package is written into the app's private storage account by the app's **managed identity**
+(not by you), through the private endpoints. So:
+
+* **Your permissions:** only the publish permission on the Function App (Website Contributor,
+  Contributor or Owner). You need no storage roles.
+* **Just deployed?** The identity's storage roles can take ~10 minutes to apply. The script retries a
+  403 for about 10 minutes before giving up; if it still fails, run `-CodeOnly` again later.
+* **DNS first:** the storage (`blob`, `queue`, `table`) and app names must resolve to the private
+  endpoint IPs from the VNet, and (for a direct upload) from your machine. With Azure Policy DNS the
+  script waits for the records; with manual DNS it shows the records and uploads only once you
+  confirm they exist (or when you run `-CodeOnly`).
+* **"Ip Forbidden"** with the temporary upload option means Azure saw a different public IP from
+  the one allowed (proxy, VPN split tunnelling): enter the right one, or upload from the network.
+* **Deployment Center > Logs** on the Function App shows the platform's side of a failed upload.
+
 ### Network requirements
 
 * **Readers** reach the portal at `https://<function app>.azurewebsites.net` through the private

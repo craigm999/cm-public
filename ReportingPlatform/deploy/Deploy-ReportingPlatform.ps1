@@ -491,6 +491,59 @@ function Invoke-BicepDeployment($S, [string]$IntegrationSubnetId, [string]$Clien
     } finally { Remove-Item $file -Force -ErrorAction SilentlyContinue }
 }
 
+function Get-UploadHint([string]$Mode, [string]$ErrorText) {
+    $hints = @()
+    if ($ErrorText -match 'Microsoft\.Web/sites/publish|AuthorizationFailed') { $hints += 'You need the publish permission on the Function App: Website Contributor, Contributor or Owner.' }
+    if ($ErrorText -match 'Ip Forbidden|ip restriction|Access Denied') {
+        $hints += $(if ($Mode -eq 'temporaryAccess') { 'The deployment endpoint saw a different IP address from the one allowed (proxy / VPN split tunnel?). Re-run -CodeOnly and enter the address Azure sees, or deploy from a machine on the network.' }
+                    else { "The deployment endpoint was reached over its public address. Check $($S.network.privateDnsZoneIds.sites) / your DNS resolves the scm host name to the private endpoint IP from this machine." })
+    }
+    $hints += 'If it still fails: Function App > Deployment Center > Logs shows whether the package couldn''t be written to storage (the app''s identity needs Storage Blob Data Owner on the host storage account, and blob/queue/table must resolve to private IPs from the VNet).'
+    ($hints | ForEach-Object { "  - $_" }) -join "`n"
+}
+
+function Test-PrivateDnsReady($S, [string]$ResourceGroup) {
+    <#
+        The app reaches its storage (where the code package goes) and the deployment endpoint
+        through the private endpoints, so their names must resolve privately first.
+        zones:  records are created with the private endpoints - nothing to wait for.
+        policy: waits (up to 20 minutes) for Azure Policy to add the DNS zone groups.
+        manual: shows the records and asks whether they've been created.
+        Returns $true when it's safe to upload.
+    #>
+    $prefix = "pe-$($S.namePrefix)-$($S.environmentName)-reports-"
+    $needed = @('host-blob', 'host-queue', 'host-table', 'function')
+    switch ($S.network.dnsMode) {
+        'zones' { return $true }
+        'policy' {
+            Write-Step 'Waiting for Azure Policy to register the private endpoints in DNS...'
+            $deadline = [datetime]::UtcNow.AddMinutes(20)
+            while ($true) {
+                $pending = @($needed | Where-Object {
+                    $groups = Invoke-AzRest -Url "$Arm/subscriptions/$($S.subscriptionId)/resourceGroups/$ResourceGroup/providers/Microsoft.Network/privateEndpoints/$prefix$_/privateDnsZoneGroups?api-version=2024-05-01" -AllowFailure
+                    -not @(Get-Prop $groups 'value' | Where-Object { $_ }).Count })
+                if (-not $pending.Count) { Write-Done 'DNS records registered.'; return $true }
+                if ([datetime]::UtcNow -gt $deadline) {
+                    Write-Attention "No DNS registration yet for: $($pending -join ', '). Check the DNS policy assignment (it usually runs within a few minutes)."
+                    return $false
+                }
+                Write-Note "Still waiting for: $($pending -join ', ')"
+                Start-Sleep -Seconds 30
+            }
+        }
+        'manual' {
+            Write-Attention 'These DNS records must exist (and resolve from the VNet and from this machine) before the code can be uploaded:'
+            foreach ($pe in @(Invoke-AzCli @('network', 'private-endpoint', 'list', '-g', $ResourceGroup) | Where-Object { $_.name -like "$prefix*" })) {
+                foreach ($c in @($pe.customDnsConfigs)) { Write-Host "    $($c.fqdn) -> $(@($c.ipAddresses) -join ', ')" }
+            }
+            if ($CodeOnly) { return $true }   # run -CodeOnly once the records exist
+            if (-not $Interactive) { return $false }
+            return (Read-YesNo 'Have these records been created?' $false -Help "If not, answer n and run ./Deploy-ReportingPlatform.ps1 -CodeOnly once they have.")
+        }
+    }
+    return $true
+}
+
 function Publish-Code($S, [string]$FunctionAppId) {
     $rg = Get-ResourceGroupFromId $FunctionAppId; $app = Get-ResourceName $FunctionAppId
     $zip = $PackagePath
@@ -501,6 +554,11 @@ function Publish-Code($S, [string]$FunctionAppId) {
     }
     $hosts = Get-ScmHost $FunctionAppId
     $mode = $S.codeDeployment
+    if ($mode -ne 'skip' -and -not (Test-PrivateDnsReady $S $rg)) {
+        if (-not $PackagePath -and (Test-Path $zip)) { Remove-Item $zip -Force }
+        Write-Attention 'Code not uploaded yet: DNS for the private endpoints is not in place.'
+        return $false
+    }
     $opened = $false
     try {
         if ($mode -eq 'direct') {
@@ -523,8 +581,21 @@ function Publish-Code($S, [string]$FunctionAppId) {
             $opened = $true
             Start-Sleep -Seconds 30
         }
-        Write-Step "Uploading the package to $app..."
-        Invoke-AzCli @('functionapp', 'deployment', 'source', 'config-zip', '-g', $rg, '-n', $app, '--src', $zip) | Out-Null
+        # The package is written to the app's storage by the app's managed identity. On a first
+        # deployment its storage roles were assigned moments ago and can take ~10 minutes to
+        # apply, so a 403 is retried for a while before giving up.
+        for ($attempt = 1; ; $attempt++) {
+            Write-Step "Uploading the package to $app$(if ($attempt -gt 1) { " (attempt $attempt)" })..."
+            Invoke-AzCli @('functionapp', 'deployment', 'source', 'config-zip', '-g', $rg, '-n', $app, '--src', $zip) -AllowFailure | Out-Null
+            if (-not (Get-AzLastError)) { break }
+            $err = Get-AzLastError
+            $retryable = $err -match '403|Forbidden|AuthorizationPermissionMismatch|AuthorizationFailure|not authorized' -and $err -notmatch 'Ip Forbidden|Microsoft\.Web/sites/publish'
+            if (-not $retryable -or $attempt -ge 6) {
+                throw "Code upload failed: $err`n$(Get-UploadHint $mode $err)"
+            }
+            Write-Attention 'Got 403 - usually the new storage roles of the app''s identity still taking effect. Retrying in 2 minutes...'
+            Start-Sleep -Seconds 120
+        }
         $expected = @(Get-ChildItem (Join-Path $platformRoot 'app') -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'function.json') } | ForEach-Object Name)
         for ($i = 0; $i -lt 6; $i++) {
             $names = @(Invoke-AzCli @('functionapp', 'function', 'list', '-g', $rg, '-n', $app) -AllowFailure | ForEach-Object { ($_.name -split '/')[-1] })

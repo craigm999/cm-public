@@ -111,6 +111,7 @@ function Invoke-AzCli {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory, Position = 0)][string[]]$Arguments, [switch]$AllowFailure)
+    $script:AzLastError = ''
     $errFile = [System.IO.Path]::GetTempFileName()
     try {
         $out = & az @Arguments --only-show-errors -o json 2> $errFile
@@ -142,6 +143,8 @@ function Invoke-AzRest {
     try { Invoke-AzCli $a -AllowFailure:$AllowFailure }
     finally { if ($tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue } }
 }
+
+function Get-AzLastError { $script:AzLastError }
 
 function Get-AzErrorKind {
     <# Rough HTTP status of the last failed az rest call, from its error text. #>
