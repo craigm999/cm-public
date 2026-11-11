@@ -210,14 +210,16 @@ function Get-RequestPrincipal {
 
 function New-HttpResponse {
     param([int]$StatusCode = 200, $Body = '', [string]$ContentType = 'application/json; charset=utf-8', [hashtable]$Headers = @{})
+    # The content type goes in the ContentType property, not a header: the PowerShell worker only
+    # recognises a lower-case 'content-type' header, otherwise it adds its own (text/plain for a
+    # string body) and the browser shows the page source.
     $h = @{
-        'Content-Type'           = $ContentType
         'Cache-Control'          = 'no-store'
         'X-Content-Type-Options' = 'nosniff'
         'Referrer-Policy'        = 'no-referrer'
     }
-    foreach ($k in $Headers.Keys) { $h[$k] = $Headers[$k] }
-    return [HttpResponseContext]@{ StatusCode = $StatusCode; Headers = $h; Body = $Body }
+    foreach ($k in $Headers.Keys) { if ($k -ne 'Content-Type') { $h[$k] = $Headers[$k] } }
+    return [HttpResponseContext]@{ StatusCode = $StatusCode; Headers = $h; ContentType = $ContentType; Body = $Body }
 }
 
 #endregion
