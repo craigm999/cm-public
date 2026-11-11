@@ -103,6 +103,32 @@ function Test-SubnetPrefix {
 #region Azure CLI ------------------------------------------------------------------------
 
 $script:AzLastError = ''
+$script:AzInvoker = $null
+
+function Get-AzInvoker {
+    <#
+        How to start the Azure CLI. On Windows 'az' is a batch file (az.cmd), so its arguments go
+        through cmd.exe, which treats ( ) & | < > as its own syntax - Graph URLs such as
+        servicePrincipals(appId='...')?$select=... or ...&$top=... then fail with "... was
+        unexpected at this time". So on Windows the CLI's own Python is started directly (what
+        az.cmd does), or, if it can't be found, cmd.exe is given every argument in quotes.
+    #>
+    if ($null -ne $script:AzInvoker) { return $script:AzInvoker }
+    $inv = @{ Mode = 'direct' }
+    $c = Get-Command az -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($IsWindows -and $c -and $c.CommandType -eq 'Application' -and $c.Source -match '\.(cmd|bat)$') {
+        $py = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $c.Source) '..\python.exe'))
+        $inv = if (Test-Path -LiteralPath $py) { @{ Mode = 'python'; Exe = $py } } else { @{ Mode = 'cmd'; Exe = $c.Source } }
+    }
+    $script:AzInvoker = $inv
+    return $inv
+}
+
+function Format-CmdLine([string]$Exe, [string[]]$Arguments) {
+    <# cmd.exe /s /c line with every argument quoted, so cmd treats ( ) & | < > literally. #>
+    $quoted = @($Exe) + $Arguments | ForEach-Object { '"' + ($_ -replace '"', '""') + '"' }
+    return '"' + ($quoted -join ' ') + '"'
+}
 
 function Invoke-AzCli {
     <#
@@ -114,7 +140,13 @@ function Invoke-AzCli {
     $script:AzLastError = ''
     $errFile = [System.IO.Path]::GetTempFileName()
     try {
-        $out = & az @Arguments --only-show-errors -o json 2> $errFile
+        $all = @($Arguments) + @('--only-show-errors', '-o', 'json')
+        $inv = Get-AzInvoker
+        $out = switch ($inv.Mode) {
+            'python' { $env:AZ_INSTALLER = 'MSI'; & $inv.Exe -IBm azure.cli @all 2> $errFile }
+            'cmd' { & $env:ComSpec /d /s /c (Format-CmdLine $inv.Exe $all) 2> $errFile }
+            default { & az @all 2> $errFile }
+        }
         $code = $LASTEXITCODE
         $err = [string](Get-Content -Raw $errFile -ErrorAction SilentlyContinue)
     } finally { Remove-Item $errFile -Force -ErrorAction SilentlyContinue }
