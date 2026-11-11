@@ -1,0 +1,2 @@
+# Saved answers hold your tenant, subscription and resource IDs: keep them out of source control
+settings*.json

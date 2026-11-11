@@ -1,7 +1,0 @@
-# Terraform state location. Copy to backend.hcl, fill in, then:
-#   terraform init -backend-config=backend.hcl
-# (Or, to try it out with local state first, delete the backend "azurerm" block in versions.tf.)
-resource_group_name  = "<<FILL IN: state storage account's resource group>>"
-storage_account_name = "<<FILL IN: state storage account name>>"
-container_name       = "<<FILL IN: e.g. tfstate>>"
-key                  = "identity-reporting/prd.tfstate"

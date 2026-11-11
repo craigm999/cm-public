@@ -49,72 +49,177 @@ ReportingPlatform/
     Api/  Web/                 HTTP functions (data API, portal)
     www/index.html             portal shell (tabs built from the registry)
   build/Build-FunctionPackage.ps1   assembles the zip: app + report scripts + dashboards + modules
-  infra/                       Terraform (+ tests/ run with `terraform test`)
-  pipelines/azure-pipelines.yml
-  setup/Set-ReportingPrerequisites.ps1   one-off privileged setup
+  deploy/
+    Deploy-ReportingPlatform.ps1    interactive deployment (asks, checks, deploys)
+    Grant-ReportingAccess.ps1       the privileged steps, for an admin to run separately
+    main.bicep                      the Azure resources
+    ReportingDeploy.psm1            shared functions
 ```
 
 The report scripts and dashboards stay in `Entra/` and `Azure/`. They're copied into the package at
 build time, so they can still be run locally and the dashboards opened offline with a CSV.
 
-## Prerequisites
+## Deploying
 
-1. **Resource providers** registered on the subscription (once, by an owner):
-   `Microsoft.App` (needed for the Flex Consumption subnet delegation), `Microsoft.Web`,
-   `Microsoft.Storage`, `Microsoft.Network`, `Microsoft.ManagedIdentity`, `Microsoft.Insights`,
-   `Microsoft.OperationalInsights`.
-2. **Subnets** in the existing VNet:
-   * Private endpoints: your existing shared subnet.
-   * Function App outbound integration: a subnet **delegated to `Microsoft.App/environments`**, /27 or
-     larger, not used for private endpoints or anything else (other Flex Consumption apps may share
-     it). Name an existing one (`integration_subnet_name`) or let Terraform create one
-     (`integration_subnet_address_prefix`).
-3. **Private DNS**: `privatelink.blob`, `privatelink.queue`, `privatelink.table` (`.core.windows.net`)
-   and `privatelink.azurewebsites.net` zones linked to the VNet. Pass their IDs in
-   `private_dns_zone_ids`, or leave them out if Azure Policy creates the records.
-4. **Region** that supports Flex Consumption. Note: a new Function App can fail to create in a
-   resource group that already holds incompatible App Service plans; if so, use another group.
-5. **Pipeline**: self-hosted agents with network access to the private endpoints and `terraform`
-   (1.9+), `pwsh` (7.4+), `az`; the agents also need to reach the PowerShell Gallery (or an internal
-   feed: `-ModuleRepository`) to bundle `Microsoft.Graph.Authentication`. Service connection
-   permissions are listed at the top of the pipeline file.
-6. **Reader group**: a security group for the people who should see the portal.
+**One PowerShell script, using the Azure CLI and Bicep.** It asks about your environment, checks
+you have the rights for each step, shows what will change, then deploys everything: the
+infrastructure, the sign-in app, the managed identity's permissions and the code.
 
-## First deployment
+Why this approach:
 
-```powershell
-# 1. Sign-in app registration (Cloud Application Administrator)
-./setup/Set-ReportingPrerequisites.ps1 -Stage AppRegistration `
-    -FunctionAppName func-idrpt-prd-reports -ReaderGroup 'SG-Identity-Reports-Readers'
-```
+* **Nothing to set up first.** Bicep has no state file to host (a Terraform state backend would be one
+  more private storage account), and no pipeline is needed.
+* **One sign-in.** The Azure CLI covers Azure Resource Manager, Bicep (it installs Bicep itself) and
+  Microsoft Graph, so there are no PowerShell module version clashes between Az and Microsoft Graph.
+* **Safe to re-run.** Every step is idempotent, and the Bicep *what-if* shows the changes before
+  they're made. Your answers are saved, so updates run without questions (`-NonInteractive`), from
+  your machine or, later, from a pipeline.
+* **Split duties.** If you don't hold a role a step needs, the step is handed to someone who does,
+  with a ready-made command (`Grant-ReportingAccess.ps1`), and the rest of the deployment carries on.
 
-2. Copy `infra/environments/prd.tfvars.example` to `infra/environments/prd.tfvars`, fill it in
-   (including `easy_auth_client_id` from step 1) and commit it.
-3. Run the pipeline. It validates (including `terraform test`), plans, waits for approval,
-   applies, and deploys the code.
+### What you need
+
+* **PowerShell 7.4+** and the **Azure CLI 2.60+** (`az upgrade` to update).
+* Access to the **PowerShell Gallery** from the machine, to bundle `Microsoft.Graph.Authentication`
+  into the package. Without it, build the package elsewhere (`build/Build-FunctionPackage.ps1`) and
+  pass it with `-PackagePath`.
+* For the code upload, **network access to the private endpoint** (VPN, ExpressRoute or a jump
+  box). If you don't have that, the script can open the deployment endpoint to your public IP address
+  only, for the few minutes the upload takes. The portal itself stays private throughout. Or you
+  can skip the code and run `-CodeOnly` later from a machine on the network.
+* In the target **VNet**: a subnet for the private endpoints with 5 free addresses (your shared one is
+  fine), and either a subnet delegated to `Microsoft.App/environments` (/27+, nothing else in it) or
+  a free /27 for the script to create one.
+
+### Run it
 
 ```powershell
-# 4. Directory + Azure permissions for the managed identity
-#    (Privileged Role Administrator; Owner/User Access Administrator on the management group)
-./setup/Set-ReportingPrerequisites.ps1 -Stage Permissions `
-    -ManagedIdentityPrincipalId <terraform output managed_identity_principal_id>
+cd ReportingPlatform/deploy
+./Deploy-ReportingPlatform.ps1 -WhatIf      # questions, checks and what-if only: changes nothing
+./Deploy-ReportingPlatform.ps1              # the real thing
 ```
 
-5. Wait for the first scheduled runs (or run them from the portal's Function App blade from a
-   machine on the network), then browse to `https://<function_app_hostname>` from the corporate
-   network.
+It asks the questions below, finding what already exists so most answers are picked from a list.
+Answers are saved to `deploy/settings.json`. The file holds no secrets but does hold your tenant,
+subscription and resource IDs, so it's git-ignored; keep a copy somewhere private.
+
+| Question | What it finds for you |
+|---|---|
+| Tenant (and sign-in) | your current Azure CLI sign-in; runs `az login --tenant` if needed |
+| Subscription | enabled subscriptions in the tenant |
+| Name prefix and environment (e.g. `idrpt`, `prd`) | shows the resulting names; checks the global ones (Function App, storage) are free |
+| Virtual network | VNets in the subscription, or a resource ID in another subscription (hub-and-spoke). Resources go in the VNet's region, which must support Flex Consumption |
+| Private endpoint subnet | subnets with no delegation, with free addresses |
+| Outbound (integration) subnet | an already-delegated subnet, an empty one to delegate, or a new one: it suggests the first free /27 and offers to attach the same NSG / route table as the private endpoint subnet |
+| Private endpoint DNS | private DNS zones (searched across all your subscriptions, showing which are linked to the VNet), Azure Policy, or manual (you get the records to create at the end) |
+| Outbound firewall? | if yes, you get the addresses to allow |
+| Resource group | existing groups, or a new one |
+| Sign-in app registration | create one, or use an existing one by client ID |
+| Reader group | finds the group by name or ID; offers to create it |
+| Graph permissions now or by an admin | defaults to now if you have Privileged Role Administrator active |
+| Azure report scope | tenant root management group, a management group, chosen subscriptions, or none |
+| Log Analytics | new workspace, or one of your existing workspaces |
+| Schedules and tags | defaults, or your own |
+| Can this machine reach the private network? | decides how the code is uploaded (see above) |
+
+Then it runs the **pre-flight checks** and lists each one as OK, Missing, Warning or Deferred, with
+the fix:
+
+* Your effective Azure permissions at every scope it will touch (resource group, subnets, VNet,
+  NSG / route table, DNS zones, workspace, Reader scopes), read from the Azure permissions API.
+* Your active Entra roles for the app registration, group and Graph permission steps.
+* Resource providers (and whether you can register them), Flex Consumption support in the region,
+  name availability, free addresses in the private endpoint subnet, and the Azure CLI version.
+
+**Missing** stops the run before anything changes (or use `-Force`). **Deferred** steps are skipped
+and handed over at the end. Then you get a plan, the Bicep what-if, and a final confirmation.
+
+### Permissions needed
+
+The simplest set for one person to do everything: **Owner** on the resource group, **Network
+Contributor** on the VNet, **Private DNS Zone Contributor** on the privatelink zones,
+**User Access Administrator** at the Azure report scope, and **Cloud Application Administrator** plus
+**Privileged Role Administrator** in Entra ID. In detail, with least-privilege alternatives:
+
+**Azure (RBAC)**
+
+| Step | Needs | Least-privilege built-in role | Scope |
+|---|---|---|---|
+| Create the resource group (only if new) | `Microsoft.Resources/subscriptions/resourceGroups/write` | Contributor | subscription |
+| Deploy the template: Function App, plan, storage, identity, private endpoints, App Insights, Log Analytics | `Microsoft.Resources/deployments/write` + write on those types | Contributor | resource group |
+| Give the identity its storage and monitoring roles (part of the template) | `Microsoft.Authorization/roleAssignments/write` | Role Based Access Control Administrator, optionally limited to Storage Blob Data Owner / Contributor, Storage Queue / Table Data Contributor and Monitoring Metrics Publisher | resource group |
+| Private endpoints and VNet integration | `Microsoft.Network/virtualNetworks/subnets/join/action` | Network Contributor | the two subnets (or the VNet) |
+| Create or delegate the integration subnet (only if chosen) | `Microsoft.Network/virtualNetworks/subnets/write` | Network Contributor | VNet |
+| Attach an NSG / route table to a new subnet (only if chosen) | `.../networkSecurityGroups/join/action`, `.../routeTables/join/action` | Network Contributor | NSG, route table |
+| Register private DNS records (only with DNS zones) | `Microsoft.Network/privateDnsZones/join/action` | Private DNS Zone Contributor | each zone |
+| Use an existing Log Analytics workspace (only if chosen) | `Microsoft.OperationalInsights/workspaces/read` | Reader | workspace |
+| Register resource providers (once, only if not registered: usually `Microsoft.App`) | `<provider>/register/action` | Contributor | subscription |
+| Give the identity **Reader** for the Azure changes report | `Microsoft.Authorization/roleAssignments/write` | User Access Administrator or RBAC Administrator | tenant root management group (or the management group / subscriptions you choose). At the tenant root this usually means a Global Administrator using *elevate access* |
+
+**Entra ID** (activate PIM-eligible roles before running: the script only sees active roles)
+
+| Step | Role |
+|---|---|
+| Create / update the sign-in app registration and enterprise app, require assignment, assign the reader group, consent to `openid profile email User.Read` | Cloud Application Administrator (or Application Administrator) |
+| Create the reader group (only if it doesn't exist) | Groups Administrator or User Administrator, unless your tenant lets users create security groups |
+| Grant the identity its read-only Graph application permissions | Privileged Role Administrator (or Global Administrator) |
+
+The Azure CLI must also be allowed to sign in (some tenants block it with Conditional Access).
+
+**Later updates** (`-CodeOnly`, or a re-run with nothing new) need only Contributor (or Website
+Contributor for code) on the resource group, and the network path to the private endpoint.
+
+### When someone else holds a role
+
+Run the deployment with what you have. Steps you can't do are listed at the end with the exact
+command, which reads everything it needs from your settings file:
+
+```powershell
+# Privileged Role Administrator: Graph permissions for the identity
+./Grant-ReportingAccess.ps1 -Stage Permissions -GraphOnly -SettingsPath ./settings.json
+
+# Owner / User Access Administrator at the Azure report scope: Reader for the identity
+./Grant-ReportingAccess.ps1 -Stage Permissions -AzureOnly -SettingsPath ./settings.json
+
+# Cloud Application Administrator, if you can't create the app registration yourself:
+# run this first, then run the deployment and choose "use an existing app registration"
+./Grant-ReportingAccess.ps1 -Stage SignInApp -SettingsPath ./settings.json -ReaderGroupId <group object ID>
+```
+
+### Updating
+
+```powershell
+./Deploy-ReportingPlatform.ps1 -NonInteractive          # infrastructure + code, using the saved answers
+./Deploy-ReportingPlatform.ps1 -CodeOnly                # just the code (e.g. after changing a report)
+./Deploy-ReportingPlatform.ps1                          # change answers: "Review them", Enter keeps each one
+```
+
+To run it from a pipeline later, sign the agent in with `az login` (service connection), keep the
+settings file as a secure file, and run `-NonInteractive`. A service principal can't hold Entra
+roles the way a person does, so keep the sign-in app and Graph permission steps with an admin
+(`Grant-ReportingAccess.ps1`).
+
+### Network requirements
+
+* **Readers** reach the portal at `https://<function app>.azurewebsites.net` through the private
+  endpoint, so they need the corporate network / VPN and DNS resolution of `privatelink.azurewebsites.net`.
+  They also need to reach `login.microsoftonline.com`.
+* **Outbound from the Function App** (through the integration subnet): `login.microsoftonline.com`,
+  `graph.microsoft.com`, `management.azure.com`, and Application Insights ingestion
+  (`<region>.in.applicationinsights.azure.com`, `<region>.livediagnostics.monitor.azure.com`) on
+  HTTPS. Storage traffic stays on the private endpoints.
 
 ## What the managed identity can do
 
 | Where | Permission | Used by |
 |---|---|---|
 | Microsoft Graph (application) | `Directory.Read.All`, `AuditLog.Read.All`, `Application.Read.All`, `Policy.Read.All`, `RoleManagement.Read.Directory` | Entra reports, and account status for the Azure report's RBAC review (all read-only) |
-| Management group (default: tenant root) | Reader | Azure changes report |
+| Tenant root management group (or the management group / subscriptions you choose) | Reader | Azure changes report |
 | Reports storage `reports` container | Storage Blob Data Contributor | writing / reading reports |
 | Host storage | Blob Data Owner, Queue + Table Data Contributor | Functions runtime |
 | Application Insights | Monitoring Metrics Publisher | telemetry |
 
-Optional: `UserAuthenticationMethod.Read.All` (setup script `-IncludeUserAuthenticationMethodRead`),
+Optional: `UserAuthenticationMethod.Read.All` (`Grant-ReportingAccess.ps1 -IncludeUserAuthenticationMethodRead`, or `"includeUserAuthenticationMethodRead": true` in the settings file),
 only if you set `"IncludeDisabledUserMethods": true` in the `auth-methods` entry of `reports.json` so
 the authentication methods report also covers disabled accounts.
 
@@ -124,13 +229,14 @@ privilege report therefore rebuilds PIM activation history from the audit log (s
 on that tab).
 
 Anyone who can change the Function App's code or settings can act as this identity, so keep
-Contributor on the resource group limited (PIM-eligible rather than standing) and the pipeline the
-normal route for changes.
+Contributor on the resource group limited (PIM-eligible rather than standing), and make the deploy
+script the normal route for changes.
 
 ## Schedules
 
-UTC (Flex Consumption doesn't support time zones). Change them with `report_schedules` in the
-tfvars; they're app settings referenced by each timer.
+UTC (Flex Consumption doesn't support time zones). Change them when the deployment asks (or edit
+`schedules` in the settings file and re-run with `-NonInteractive`); they're app settings
+referenced by each timer.
 
 | Report | Default |
 |---|---|
@@ -150,9 +256,10 @@ tfvars; they're app settings referenced by each timer.
 3. Add an entry to `app/reports.json` (`id`, `title`, `description`, `script`, `dashboard`, `auth`,
    `parameters`).
 4. Add a timer function folder (copy `app/ReportAppSignIns`, change the id and the schedule
-   setting name), and add the schedule to `report_schedules` in `infra/variables.tf` and the
-   `SCHEDULE_...` app setting in `infra/function.tf`.
-5. Grant any extra read permissions to the managed identity with the setup script, if needed.
+   setting name), and add the schedule default to `sched` and the `SCHEDULE_...` app setting in
+   `deploy/main.bicep`.
+5. Grant any extra read permissions to the managed identity (`Grant-ReportingAccess.ps1` holds the
+   list), then re-run the deployment with `-NonInteractive`.
 
 The build fails if a registered report is missing its script, dashboard, timer function or `?src=`
 support. The portal's tabs come from the registry, so `index.html` doesn't change.
@@ -163,7 +270,8 @@ support. The portal's tabs come from the registry, so `index.html` doesn't chang
   keeps the previous successful report visible.
 * **History**: pick any stored day from the *Run* list; *Download CSV* downloads the selected run.
 * **Logs**: Application Insights (`traces`, `exceptions`) for the Function App.
-* **Local testing**: `terraform test` in `infra/`; the report scripts run interactively as before.
+* **Preview a change**: `./Deploy-ReportingPlatform.ps1 -NonInteractive -WhatIf` runs the checks and the Bicep what-if.
+* **Local testing**: the report scripts run interactively as before.
 
 ## Cost (approximate, list prices)
 
@@ -182,7 +290,10 @@ Check the [pricing calculator](https://azure.microsoft.com/pricing/calculator/) 
   the private endpoint (corporate network / VPN) and must be able to reach `login.microsoftonline.com`.
 * Flex Consumption deployments with both a private endpoint and VNet integration have had reported
   time-out issues ([Azure-Functions#2635](https://github.com/Azure/Azure-Functions/issues/2635)).
-  If the deploy step times out, re-run it.
+  If the code upload times out, re-run `-CodeOnly`.
+* The temporary code-upload option opens only the deployment (SCM) endpoint, only to your IP, and
+  closes it straight after, even if the upload fails. Any full re-deployment also resets public
+  access to disabled. Where policy forbids even that, use a machine on the network.
 * App Service authentication is configured the standard way (`authsettingsV2`); Microsoft doesn't
   explicitly document it for Flex Consumption, so the API and web functions also reject any request
   without an authenticated Entra principal.
