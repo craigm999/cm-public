@@ -7,7 +7,9 @@
       GET /api/reports/{id}/latest                latest CSV
       GET /api/reports/{id}/history               dates with a stored run
       GET /api/reports/{id}/history/{yyyy-MM-dd}  CSV from that day
-      POST /api/reports/{id}/run                  queue an on-demand run (needs header X-Requested-With)
+      GET|POST /api/reports/{id}/run              queue an on-demand run (needs header X-Requested-With,
+                                                  or the browser's same-origin headers). The portal uses
+                                                  GET: some proxies / filters refuse POSTs to the app.
 #>
 using namespace System.Net
 param($Request, $TriggerMetadata)
@@ -29,7 +31,7 @@ try {
     $registry = Get-ReportRegistry
     $method = ([string]$Request.Method).ToUpperInvariant()
 
-    if ($method -eq 'POST') {
+    if ($method -eq 'POST' -or ($method -in 'GET', '' -and $action -eq 'run')) {
         if (-not $id -or $action -ne 'run' -or $date) { Send 404 (@{ error = 'Unknown action.' } | ConvertTo-Json); return }
         # CSRF protection: only accept requests made by the portal page itself. Its script sends
         # X-Requested-With; as a fallback (in case a proxy drops that header) accept the browser's own

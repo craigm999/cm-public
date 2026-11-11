@@ -132,7 +132,9 @@
     const r = REPORTS.find(x => x.id === current); if (!r || isBusy(r.status)) return;
     if (!confirm(`Run the ${r.title} report now?\n\nIt runs in the background and can take several minutes. The page updates when it's done.`)) return;
     const b = $('runNow'); b.disabled = true; b.textContent = 'Queuing…';
-    fetch(`/api/reports/${encodeURIComponent(r.id)}/run`, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    // GET rather than POST: some corporate proxies / filters refuse POSTs to the app. The custom
+    // header means another site can't trigger it (that would need a CORS preflight, which is refused).
+    fetch(`/api/reports/${encodeURIComponent(r.id)}/run`, { method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
       .then(async x => {
         const text = await x.text().catch(() => '');
         let body = null; try { body = JSON.parse(text); } catch (_) { /* not JSON: came from the platform, not the app */ }
@@ -140,7 +142,7 @@
         if (body && body.status) r.status = body.status;
         if (!x.ok && x.status !== 409) {
           const detail = body && body.error ? body.error
-            : `The response didn't come from the reporting app, so the Azure platform or a proxy refused it (an empty 403 usually means the app's CORS settings don't list this site's address):\n${text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) || '(empty response)'}`;
+            : `The response didn't come from the reporting app, so the Azure platform or a proxy refused it:\n${text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) || '(empty response)'}`;
           alert(`Couldn't queue the run (HTTP ${x.status}):\n\n${detail}`);
         }
         renderTabs(); if (current === r.id) renderToolbar(r);

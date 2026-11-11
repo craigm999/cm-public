@@ -286,13 +286,16 @@ support. The portal's tabs come from the registry, so `index.html` doesn't chang
 
 * **Run status**: each tab shows the last run time, row count, warnings and errors. A failed run
   keeps the previous successful report visible.
-* **Run now**: the button on each tab queues the report to run straight away, in the background
+* **Run now**: the button on each tab (`GET /api/reports/<id>/run`, with an `X-Requested-With` header
+  so other sites can't trigger it; GET because some proxies refuse POSTs) queues the report to run straight away, in the background
   (queue `report-runs` in the host storage account, picked up by the `RunOnDemand` function), so it
   isn't limited by browser or HTTP time-outs. The tab shows *Queued* / *Running* and reloads the
   dashboard when the run finishes. A report can't be queued while it's already queued or running, and
   a scheduled run that comes round while a run is in progress is skipped. Any member of the reader
   group can use it. The Azure portal's *Code + Test → Test/Run* doesn't work for this app: it calls
-  the app's admin endpoint from your browser, which the private endpoint and sign-in block.
+  the app's admin endpoint from your browser, which the private endpoint and sign-in block. Other
+  Function App blades that call the app directly (e.g. CORS, Functions list details) may show
+  *failed to load* for the same reason; use the Azure CLI for those settings.
 * **History**: pick any stored day from the *Run* list; *Download CSV* downloads the selected run.
 * **Logs**: Application Insights (`traces`, `exceptions`) for the Function App.
 * **Preview a change**: `./Deploy-ReportingPlatform.ps1 -NonInteractive -WhatIf` runs the checks and the Bicep what-if.
