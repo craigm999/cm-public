@@ -31,8 +31,20 @@ try {
 
     if ($method -eq 'POST') {
         if (-not $id -or $action -ne 'run' -or $date) { Send 404 (@{ error = 'Unknown action.' } | ConvertTo-Json); return }
-        # Only the portal's own script sends this header; a cross-site form post can't (CSRF protection).
-        if (-not (Get-HeaderValue $Request.Headers 'X-Requested-With')) { Send 403 (@{ error = 'Missing X-Requested-With header.' } | ConvertTo-Json); return }
+        # CSRF protection: only accept requests made by the portal page itself. Its script sends
+        # X-Requested-With; as a fallback (in case a proxy drops that header) accept the browser's own
+        # same-origin signals, which another site can't forge: Sec-Fetch-Site, or an Origin matching this host.
+        $origin = [string](Get-HeaderValue $Request.Headers 'Origin')
+        $reqHost = [string]$(if (Get-HeaderValue $Request.Headers 'X-Forwarded-Host') { Get-HeaderValue $Request.Headers 'X-Forwarded-Host' } else { Get-HeaderValue $Request.Headers 'Host' })
+        $originHost = try { if ($origin) { ([uri]$origin).Host } else { '' } } catch { '' }
+        $sameOrigin = (Get-HeaderValue $Request.Headers 'Sec-Fetch-Site') -eq 'same-origin' -or
+            ($originHost -and $reqHost -and $originHost -ieq ($reqHost -split ':')[0])
+        if (-not (Get-HeaderValue $Request.Headers 'X-Requested-With') -and -not $sameOrigin) {
+            $names = @($Request.Headers.Keys | ForEach-Object { "$_" } | Sort-Object) -join ', '
+            Write-Warning "[$id] Run request from $($principal.Name) rejected by the same-origin check. Origin '$origin', host '$reqHost'. Headers received: $names"
+            Send 403 (@{ error = "Rejected by the portal's cross-site request check: the request didn't come from the portal page (origin '$origin', host '$reqHost'). See the Api function logs." } | ConvertTo-Json)
+            return
+        }
         if (-not ($registry | Where-Object { $_.id -eq $id })) { Send 404 (@{ error = 'Unknown report.' } | ConvertTo-Json); return }
         $current = Get-ReportStatus -Id $id
         if (Test-ReportBusy $current) { Send 409 (@{ error = 'This report is already queued or running.'; status = $current } | ConvertTo-Json -Depth 6); return }

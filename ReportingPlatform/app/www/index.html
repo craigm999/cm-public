@@ -134,10 +134,15 @@
     const b = $('runNow'); b.disabled = true; b.textContent = 'Queuing…';
     fetch(`/api/reports/${encodeURIComponent(r.id)}/run`, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
       .then(async x => {
-        let body = null; try { body = await x.json(); } catch (_) { /* not JSON */ }
+        const text = await x.text().catch(() => '');
+        let body = null; try { body = JSON.parse(text); } catch (_) { /* not JSON: came from the platform, not the app */ }
         if (x.status === 401) { location.href = '/.auth/login/aad?post_login_redirect_uri=' + encodeURIComponent(location.pathname + location.hash); return; }
         if (body && body.status) r.status = body.status;
-        if (!x.ok && x.status !== 409) alert(`Couldn't queue the run: ${(body && body.error) || x.status + ' ' + x.statusText}`);
+        if (!x.ok && x.status !== 409) {
+          const detail = body && body.error ? body.error
+            : `The response didn't come from the reporting app (so the Azure platform or a proxy refused it):\n${text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) || '(empty response)'}`;
+          alert(`Couldn't queue the run (HTTP ${x.status}):\n\n${detail}`);
+        }
         renderTabs(); if (current === r.id) renderToolbar(r);
         poll();
       })
