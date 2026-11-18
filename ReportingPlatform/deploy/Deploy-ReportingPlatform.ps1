@@ -79,8 +79,8 @@ $Arm = 'https://management.azure.com'
 $template = Join-Path $PSScriptRoot 'main.bicep'
 $FlexProviders = @('Microsoft.Web', 'Microsoft.App', 'Microsoft.Storage', 'Microsoft.Network', 'Microsoft.ManagedIdentity', 'Microsoft.Insights', 'Microsoft.OperationalInsights')
 $DnsZoneNames = [ordered]@{ blob = 'privatelink.blob.core.windows.net'; queue = 'privatelink.queue.core.windows.net'; table = 'privatelink.table.core.windows.net'; sites = 'privatelink.azurewebsites.net' }
-$DefaultSchedules = [ordered]@{ leastPrivilege = '0 0 2 * * *'; azureChanges = '0 30 2 * * *'; appSignIns = '0 0 4 * * 1'; conditionalAccess = '0 30 4 * * 1'; authMethods = '0 0 3 * * *' }
-$ScheduleNames = @{ leastPrivilege = 'Least privilege'; azureChanges = 'Azure changes'; appSignIns = 'Applications'; conditionalAccess = 'Conditional Access'; authMethods = 'Authentication methods' }
+$DefaultSchedules = [ordered]@{ leastPrivilege = '0 0 2 * * *'; azureChanges = '0 30 2 * * *'; appSignIns = '0 0 4 * * 1'; conditionalAccess = '0 30 4 * * 1'; authMethods = '0 0 3 * * *'; publicExposure = '0 30 3 * * *' }
+$ScheduleNames = @{ leastPrivilege = 'Least privilege'; azureChanges = 'Azure changes'; appSignIns = 'Applications'; conditionalAccess = 'Conditional Access'; authMethods = 'Authentication methods'; publicExposure = 'Public exposure' }
 $OutboundFqdns = @('login.microsoftonline.com', 'graph.microsoft.com', 'management.azure.com', '<region>.in.applicationinsights.azure.com (see the connection string)', '<region>.livediagnostics.monitor.azure.com')
 $Interactive = -not $NonInteractive -and -not $CodeOnly
 
@@ -306,7 +306,7 @@ Needs Privileged Role Administrator (or Global Administrator) - $(if ($canGrant)
     if ($mgs.Count) { $opts += @{ Label = 'A specific management group'; Value = 'managementGroup' } }
     $opts += @{ Label = 'Specific subscriptions'; Value = 'subscriptions' }
     $opts += @{ Label = "Don't grant it now (I'll give it Reader myself)"; Value = 'none' }
-    $p.azureReaderScope = Read-Choice 'Which subscriptions should the Azure changes report cover? (the identity gets Reader there)' $opts $p.azureReaderScope
+    $p.azureReaderScope = Read-Choice 'Which subscriptions should the Azure reports (changes, public exposure) cover? (the identity gets Reader there)' $opts $p.azureReaderScope
     if ($p.azureReaderScope -eq 'managementGroup') {
         $p.managementGroupId = Read-Choice 'Which management group?' @($mgs | Sort-Object displayName | ForEach-Object { @{ Label = $_.displayName; Value = $_.name; Detail = $_.name } }) $p.managementGroupId
     }
@@ -321,7 +321,7 @@ function Read-Monitoring($S) {
     $ws = @(Invoke-AzCli @('monitor', 'log-analytics', 'workspace', 'list') -AllowFailure | Where-Object { $_ } | Sort-Object name)
     $opts = @(@{ Label = 'Create a new Log Analytics workspace'; Value = '' }) + @($ws | ForEach-Object { @{ Label = $_.name; Value = $_.id; Detail = "$($_.resourceGroup), $($_.location)" } })
     $S.monitoring.logAnalyticsWorkspaceId = Read-Choice 'Where should the Function App logs (Application Insights) go?' $opts $S.monitoring.logAnalyticsWorkspaceId
-    $keep = Read-YesNo "Keep the default report schedules? (UTC: least privilege 02:00, Azure changes 02:30, auth methods 03:00 daily; apps 04:00 and Conditional Access 04:30 on Mondays)" (-not $S.schedules.Count)
+    $keep = Read-YesNo "Keep the default report schedules? (UTC: least privilege 02:00, Azure changes 02:30, auth methods 03:00, public exposure 03:30 daily; apps 04:00 and Conditional Access 04:30 on Mondays)" (-not $S.schedules.Count)
     if ($keep) { $S.schedules = [ordered]@{} } else {
         foreach ($k in @($DefaultSchedules.Keys)) {
             $S.schedules[$k] = Read-Text "Schedule for $($ScheduleNames[$k]) (NCRONTAB, UTC: second minute hour day month weekday)" $(if ($S.schedules[$k]) { $S.schedules[$k] } else { $DefaultSchedules[$k] }) { param($v) if (@($v -split '\s+').Count -ne 6) { 'Six fields, e.g. 0 0 2 * * * for daily at 02:00.' } }

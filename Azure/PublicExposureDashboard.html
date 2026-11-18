@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Public Exposure</title>
+<!--
+  Dashboard for the CSV produced by Get-AzurePublicExposureReport.ps1.
+  Fully self-contained: no network requests, the CSV is read locally in the browser.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ee;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6; --c-create: #2a78d6; --c-update: #1baf7a; --c-delete: #eb6834;
+    --warning: #fab219; --critical: #d03b3b; --critical-text: #b42f2f; --neutral: #c3c2b7;
+    --accent-wash: rgba(42,120,214,0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+      --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5; --c-create: #3987e5; --c-update: #199e70; --c-delete: #d95926;
+      --neutral: #6b6a66; --accent-wash: rgba(57,135,229,0.16); --critical-text: #f07070;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --c-create: #3987e5; --c-update: #199e70; --c-delete: #d95926;
+    --neutral: #6b6a66; --accent-wash: rgba(57,135,229,0.16); --critical-text: #f07070;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--ink-2); margin: 0; }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .card-sub { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; }
+  button, select, input[type=search] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; }
+  button { cursor: pointer; }
+  button:hover { background: var(--surface-2); }
+  button.primary { background: var(--series-1); color: #fff; border-color: transparent; }
+  button.primary:hover { filter: brightness(1.08); }
+  button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; margin-bottom: 12px; }
+  #drop { border: 1.5px dashed var(--axis); border-radius: 12px; padding: 48px 16px; text-align: center; background: var(--surface); color: var(--ink-2); }
+  #drop.over { border-color: var(--series-1); background: var(--accent-wash); }
+  #drop strong { color: var(--ink); display: block; font-size: 16px; margin-bottom: 6px; }
+  #drop code { background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 16px; }
+  .filters label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .filters select { max-width: 260px; }
+  .filters input[type=search] { min-width: 220px; flex: 1 1 220px; max-width: 380px; }
+  .tiles { display: grid; grid-template-columns: minmax(170px, 1.2fr) repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-weight: 500; }
+  .pill .sw { width: 8px; height: 8px; border-radius: 50%; }
+  .owner { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+  .owner + .owner { margin-top: 2px; }
+  .st-bad { color: var(--critical-text); font-weight: 600; font-size: 12px; }
+  ul.findings { margin: 0; padding-left: 16px; }
+  ul.findings li + li { margin-top: 2px; }
+  .rbac-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .rbac-filters label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .tile { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
+  button.tile:hover { background: var(--surface-2); }
+  .tile[aria-pressed="true"] { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); background: var(--accent-wash); }
+  .tile .label { color: var(--ink-2); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .tile .value { font-size: 30px; font-weight: 600; line-height: 1.15; }
+  .tile .meta { color: var(--muted); font-size: 12px; }
+  .tile.hero .value { font-size: 48px; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; display: inline-block; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); margin: 0 0 10px; padding: 0; list-style: none; }
+  .legend li { display: flex; align-items: center; gap: 6px; }
+  .chart { position: relative; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .hit { cursor: pointer; }
+  .hit:hover .mark, .hit:focus .mark { filter: brightness(1.12); }
+  .hit:focus { outline: none; }
+  .hit:focus .mark { stroke: var(--ink); stroke-width: 1.5; }
+  #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); opacity: 0; transition: opacity .1s; max-width: 320px; }
+  #tip .v { font-size: 14px; font-weight: 600; }
+  #tip .k { color: var(--ink-2); }
+  #tip .row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+  #tip .row .n { font-weight: 600; font-variant-numeric: tabular-nums; }
+  #tip .key { width: 12px; height: 2px; border-radius: 1px; display: inline-block; margin-right: 6px; vertical-align: middle; }
+  #tip .hint { color: var(--muted); margin-top: 4px; }
+  .table-head { display: flex; flex-wrap: wrap; gap: 8px 12px; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .focus-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-wash); border: 1px solid var(--series-1); border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 13px; max-width: 100%; }
+  .focus-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .focus-chip button { border: 0; background: transparent; padding: 0 6px; border-radius: 999px; font-size: 15px; line-height: 1; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; max-height: 640px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { position: sticky; top: 0; background: var(--surface-2); font-weight: 600; color: var(--ink-2); white-space: nowrap; z-index: 1; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th .arrow { color: var(--muted); margin-left: 4px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.res { min-width: 200px; max-width: 320px; overflow-wrap: anywhere; }
+  td.wide { min-width: 160px; max-width: 280px; overflow-wrap: anywhere; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .ct { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-weight: 500; }
+  .ct .sw { width: 8px; height: 8px; border-radius: 50%; }
+  .tag { display: inline-flex; font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-2); white-space: nowrap; margin: 0 4px 2px 0; }
+  .link { color: inherit; background: none; border: 0; padding: 0; text-align: left; font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: var(--axis); text-underline-offset: 2px; }
+  .link:hover { text-decoration-color: var(--ink); background: none; }
+  tr:last-child td { border-bottom: 0; }
+  .more { margin-top: 10px; color: var(--ink-2); font-size: 13px; display: flex; gap: 10px; align-items: center; }
+  .banner { border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--border); display: flex; gap: 10px; }
+  .banner .ico { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--warning); color: #0b0b0b; font-weight: 700; font-size: 12px; display: grid; place-items: center; margin-top: 1px; }
+  details.data { margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+  details.data summary { cursor: pointer; }
+  details.data .table-scroll { margin-top: 8px; max-height: 300px; }
+  footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
+  footer p { margin: 4px 0; }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 640px) {
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tile.hero { grid-column: 1 / -1; }
+    .tile .value { font-size: 26px; } .tile.hero .value { font-size: 40px; }
+  }
+  .hidden { display: none !important; }
+  .sev { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-weight: 600; font-size: 12px; }
+  .sev .sw { width: 8px; height: 8px; border-radius: 50%; }
+  .rec { color: var(--ink-2); font-size: 12px; margin-top: 4px; }
+  .rec::before { content: '→ '; }
+  .ev { color: var(--muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+  td.find { min-width: 260px; max-width: 460px; }
+  td.expo { min-width: 180px; max-width: 280px; overflow-wrap: anywhere; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+  .scope { color: var(--ink-2); font-size: 13px; }
+  .filters .chk { display: flex; gap: 6px; align-items: center; color: var(--ink-2); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Public exposure</h1>
+      <p class="sub" id="subtitle">Internet-facing Azure resources, with a risk rating and what to do about each finding</p>
+    </div>
+    <div class="actions">
+      <input type="file" id="file" accept=".csv,text/csv" class="hidden">
+      <button class="primary" id="btnLoad" type="button">Load CSV…</button>
+      <button id="btnSample" type="button">Sample data</button>
+    </div>
+  </header>
+
+  <div id="drop">
+    <strong>Drop the public exposure CSV here</strong>
+    Generate it with <code>.\Get-AzurePublicExposureReport.ps1 -OutputPath .\exposure.csv</code> (add <code>-ManagementGroupId</code> or <code>-SubscriptionId</code> to narrow the scope), then drop it here or use <em>Load CSV</em>.<br>
+    The file is read in your browser only; nothing is uploaded.
+  </div>
+
+  <main id="dash" class="hidden">
+    <div id="banners"></div>
+    <div class="filters" role="group" aria-label="Filters">
+      <label>Subscription <select id="fSub"><option value="">All subscriptions</option></select></label>
+      <label>Show
+        <select id="fSev">
+          <option value="2">Medium and above</option>
+          <option value="3">High and above</option>
+          <option value="1" selected>Everything except Info</option>
+          <option value="0">Everything, including Info</option>
+        </select>
+      </label>
+      <label>Category <select id="fCat"><option value="">All categories</option></select></label>
+      <label class="chk"><input type="checkbox" id="fReach"> Internet-reachable only</label>
+      <input type="search" id="fSearch" placeholder="Search resource, IP, rule or finding" aria-label="Search">
+    </div>
+
+    <section class="tiles" id="tiles" aria-label="Summary"></section>
+
+    <div class="grid2">
+      <section class="card">
+        <h2>Findings by category</h2>
+        <p class="card-sub">By severity. Click a bar to list that category's findings.</p>
+        <ul class="legend" id="lgCat"></ul>
+        <div class="chart" id="chCat"></div>
+        <details class="data"><summary>Show data</summary><div class="table-scroll" id="tbCat"></div></details>
+      </section>
+      <section class="card">
+        <h2>Sensitive ports open to the internet</h2>
+        <p class="card-sub">Resources reachable on each port from any internet address (VMs, load balancers, firewall DNAT, NSG rules). Click a bar to list them.</p>
+        <ul class="legend" id="lgPorts"></ul>
+        <div class="chart" id="chPorts"></div>
+        <details class="data"><summary>Show data</summary><div class="table-scroll" id="tbPorts"></div></details>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="table-head">
+        <div><h2 id="findTitle">Findings</h2><p class="card-sub" id="findSub" style="margin:0"></p></div>
+        <div class="actions"><span id="focusChip"></span><button type="button" id="btnExport">Export these rows</button></div>
+      </div>
+      <div class="table-scroll"><table><thead><tr id="findHead"></tr></thead><tbody id="findBody"></tbody></table></div>
+      <div class="more" id="findMore"></div>
+    </section>
+
+    <section class="card">
+      <h2>Subscriptions</h2>
+      <p class="card-sub" id="subSub">Coverage of the report.</p>
+      <div class="table-scroll"><table><thead><tr id="subHead"></tr></thead><tbody id="subBody"></tbody></table></div>
+    </section>
+
+    <footer>
+      <p>Severity: <strong>Critical</strong> – reachable now from any internet address on a management, database, file-sharing or container port (or every port), or data readable without signing in. <strong>High</strong> – a likely way in (no WAF, public Kubernetes API, database open to broad ranges or all networks, RDP/SSH published through a load balancer). <strong>Medium</strong> – public but should be restricted, or a weak setting (HTTP, WAF in detection mode, all networks allowed). <strong>Low</strong> – restricted exposure or hygiene. <strong>Info</strong> – public by design and configured as expected.</p>
+      <p>VM reachability is worked out from the NIC and subnet NSGs (rules in priority order, including the defaults; a Basic public IP with no NSG is open, a Standard one closed). It doesn't evaluate application security groups as sources, service tags other than Internet, or an Azure Firewall / NVA in front, so treat VM findings as "the NSGs would allow this".</p>
+    </footer>
+  </main>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const fmtInt = new Intl.NumberFormat();
+  const SEVS = [
+    { key: 'Critical', color: 'var(--critical)' },
+    { key: 'High', color: 'var(--c-delete)' },
+    { key: 'Medium', color: 'var(--warning)' },
+    { key: 'Low', color: 'var(--series-1)' },
+    { key: 'Info', color: 'var(--neutral)' },
+  ];
+  const RANK = { Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0 };
+  const SEV_COLOR = Object.fromEntries(SEVS.map(s => [s.key, s.color]));
+  const PORT_NAMES = { 22: 'SSH', 3389: 'RDP', 5985: 'WinRM', 5986: 'WinRM (TLS)', 23: 'Telnet', 1433: 'SQL Server', 3306: 'MySQL', 5432: 'PostgreSQL', 1521: 'Oracle', 27017: 'MongoDB', 6379: 'Redis', 9200: 'Elasticsearch', 11211: 'Memcached', 21: 'FTP', 445: 'SMB', 135: 'RPC', 139: 'NetBIOS', 2375: 'Docker API', 2376: 'Docker API (TLS)', 10250: 'Kubelet', 6443: 'Kubernetes API', 80: 'HTTP', 8080: 'HTTP (alt)', 443: 'HTTPS' };
+  const MGMT = new Set([22, 3389, 5985, 5986, 23]);
+  const SENSITIVE = new Set([22, 3389, 5985, 5986, 23, 1433, 3306, 5432, 1521, 27017, 6379, 9200, 11211, 21, 445, 135, 139, 2375, 2376, 10250, 6443, 80, 8080]);
+
+  let FIND = [], SUBS = [], META = {};
+  let focus = null, page = 200, sort = { key: 'sev', dir: -1 }, view = [];
+
+  // ---------------------------------------------------------------- CSV ----
+  function parseCsv(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const rows = []; let row = []; let field = ''; let q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; } else field += c; }
+      else if (c === '"') q = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(field); field = ''; rows.push(row); row = []; }
+      else field += c;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    const head = rows.shift() || [];
+    return rows.filter(r => r.length > 1 || r[0]).map(r => { const o = {}; head.forEach((h, i) => o[h.trim()] = (r[i] ?? '').trim()); return o; });
+  }
+  const date = (s) => { if (!s) return null; const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z'); return isNaN(d) ? null : d; };
+  const fmtDT = (d) => d ? d.toISOString().slice(0, 16).replace('T', ' ') : '';
+  const fmtD = (d) => d ? d.toISOString().slice(0, 10) : '';
+  const dayKey = (d) => d.toISOString().slice(0, 10);
+  const shortType = (t) => (t || '').replace(/^Microsoft\./, '');
+
+  function load(text, source) {
+    const rows = parseCsv(text);
+    if (!rows.length || !('RecordType' in rows[0]) || !('Severity' in rows[0]) || !('Exposure' in rows[0])) {
+      alert('This does not look like a Get-AzurePublicExposureReport.ps1 CSV (missing RecordType / Severity / Exposure columns).');
+      return;
+    }
+    FIND = []; SUBS = [];
+    rows.forEach((r, i) => {
+      if (r.RecordType === 'Finding') {
+        const ports = (r.Ports || '').split(',').map(x => x.trim()).filter(Boolean);
+        FIND.push({ i, sev: r.Severity in RANK ? r.Severity : 'Info', cat: r.Category || 'Other', name: r.ResourceName, type: r.ResourceType, rg: r.ResourceGroup,
+          sub: r.SubscriptionId, subName: r.SubscriptionName || r.SubscriptionId, id: r.ResourceId, exposure: r.Exposure, ip: r.PublicIp, ports,
+          allPorts: ports.includes('all ports') || /all ports/.test(r.Exposure || ''), source: r.Source, attached: r.AttachedTo,
+          reach: !/^false$/i.test(r.InternetReachable || 'true'), finding: r.Finding, rec: r.Recommendation, evidence: r.Evidence, raw: r });
+      } else if (r.RecordType === 'Subscription') {
+        SUBS.push({ id: r.SubscriptionId, name: r.SubscriptionName || r.SubscriptionId, checked: +r.ResourcesChecked || 0, pub: +r.PublicResources || 0, priv: +r.PrivateResources || 0, errors: r.Errors, scope: r.Scope });
+      }
+    });
+    const any = rows.find(r => r.ReportGeneratedUtc);
+    META = { source, generated: any ? date(any.ReportGeneratedUtc) : new Date(), scope: (SUBS[0] && SUBS[0].scope) || '' };
+    const subSel = $('fSub'); subSel.replaceChildren(new Option('All subscriptions', ''));
+    const subs = new Map(); SUBS.forEach(s => subs.set(s.id, s.name)); FIND.forEach(f => { if (f.sub && !subs.has(f.sub)) subs.set(f.sub, f.subName); });
+    [...subs.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]))).forEach(([id, n]) => subSel.add(new Option(n || id, id)));
+    const catSel = $('fCat'); catSel.replaceChildren(new Option('All categories', ''));
+    [...new Set(FIND.map(f => f.cat))].sort().forEach(c => catSel.add(new Option(c, c)));
+    focus = null; page = 200;
+    $('drop').classList.add('hidden'); $('dash').classList.remove('hidden');
+    $('subtitle').textContent = [source, META.scope, `${fmtInt.format(subs.size)} subscription(s)`, META.generated ? 'generated ' + fmtD(META.generated) : ''].filter(Boolean).join(' · ');
+    render();
+  }
+
+  // ------------------------------------------------------------ scoping ----
+  function scoped(ignoreCat) {
+    const sub = $('fSub').value, min = +$('fSev').value, cat = $('fCat').value, reach = $('fReach').checked, q = $('fSearch').value.trim().toLowerCase();
+    return FIND.filter(f => {
+      if (sub && f.sub !== sub) return false;
+      if (RANK[f.sev] < min) return false;
+      if (!ignoreCat && cat && f.cat !== cat) return false;
+      if (reach && !f.reach) return false;
+      if (q && !`${f.name} ${f.rg} ${f.type} ${f.ip} ${f.exposure} ${f.finding} ${f.evidence} ${f.attached} ${f.subName}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+  const openPorts = (f) => f.source === 'Any internet address' || /^Any internet address/.test(f.source || '') ? f.ports.map(Number).filter(p => SENSITIVE.has(p)) : [];
+  function focusMatch(f) {
+    if (!focus) return true;
+    switch (focus.kind) {
+      case 'sev': return f.sev === focus.value;
+      case 'cat': return f.cat === focus.value && (!focus.sev || f.sev === focus.sev);
+      case 'port': return focus.value === 'all' ? f.allPorts && f.source.startsWith('Any internet') : openPorts(f).includes(focus.value);
+      case 'mgmt': return f.allPorts && f.source.startsWith('Any internet') || openPorts(f).some(p => MGMT.has(p));
+      case 'resource': return f.id === focus.value;
+      case 'unused': return f.cat === 'Public IP' && /not attached/.test(f.finding);
+      case 'reach': return f.reach;
+    }
+    return true;
+  }
+  function setFocus(f) {
+    const same = focus && f && JSON.stringify(focus) === JSON.stringify(f);
+    focus = same ? null : f; page = 200;
+    render();
+    if (focus) $('findTitle').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ------------------------------------------------------------ helpers ----
+  // ------------------------------------------------------------ helpers ----
+  const tip = $('tip');
+  function showTipNodes(evt, nodes) {
+    tip.replaceChildren(...nodes);
+    let x, y;
+    if (evt.type !== 'focus' && evt.clientX != null) { x = evt.clientX; y = evt.clientY; }
+    else { const b = evt.currentTarget.getBoundingClientRect(); x = b.left + b.width / 2; y = b.top; }
+    tip.style.opacity = '1';
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = x + 12, top = y - th - 12;
+    if (left + tw > innerWidth - 8) left = x - tw - 12;
+    if (top < 8) top = y + 16;
+    tip.style.left = Math.max(8, left) + 'px'; tip.style.top = top + 'px';
+  }
+  function showTip(evt, value, label, hint) { const n = [el('div', 'v', value), el('div', 'k', label)]; if (hint) n.push(el('div', 'hint', hint)); showTipNodes(evt, n); }
+  const hideTip = () => { tip.style.opacity = '0'; };
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function svgEl(tag, attrs, parent) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.append(e); return e; }
+  function clickable(node, fn) { node.setAttribute('tabindex', '0'); node.setAttribute('role', 'button'); node.addEventListener('click', fn); node.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } }); }
+  function tipOn(node, fn) { node.addEventListener('pointermove', fn); node.addEventListener('focus', fn); node.addEventListener('pointerleave', hideTip); node.addEventListener('blur', hideTip); }
+  const truncate = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+  function niceTicks(v) {
+    // whole-number axis: step from 1, 2, 5 x 10^n so that ~4 steps cover v
+    const raw = Math.max(1, v) / 4; const p = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = Math.max(1, [1, 2, 5, 10].map(m => m * p).find(x => x >= raw));
+    const n = Math.max(1, Math.ceil(Math.max(1, v) / step));
+    return { max: n * step, step, n };
+  }
+  function legend(host, items) { host.replaceChildren(...items.map(it => { const li = el('li'); const sw = el('span', 'sw'); sw.style.background = it.color; li.append(sw, document.createTextNode(it.label)); return li; })); }
+  function dataTable(host, head, rows) {
+    const t = el('table'); const tr = el('tr'); head.forEach(h => tr.append(el('th', '', h)));
+    const th = el('thead'); th.append(tr); t.append(th); const tb = el('tbody');
+    rows.forEach(r => { const row = el('tr'); r.forEach((v, i) => row.append(el('td', i ? 'num' : '', v))); tb.append(row); });
+    t.append(tb); host.replaceChildren(t);
+  }
+  function sortHeader(headEl, cols, state, onChange) {
+    headEl.replaceChildren();
+    cols.forEach(c => {
+      const th = el('th', c.get ? 'sortable' : '', c.label); th.scope = 'col';
+      if (c.get) {
+        th.tabIndex = 0;
+        th.setAttribute('aria-sort', state.key === c.key ? (state.dir > 0 ? 'ascending' : 'descending') : 'none');
+        if (state.key === c.key) th.append(el('span', 'arrow', state.dir > 0 ? '▲' : '▼'));
+        const act = () => { if (state.key === c.key) state.dir = -state.dir; else { state.key = c.key; state.dir = c.desc ? -1 : 1; } onChange(); };
+        th.addEventListener('click', act); th.addEventListener('keydown', e => { if (e.key === 'Enter') act(); });
+      }
+      headEl.append(th);
+    });
+  }
+  function sortBy(arr, cols, state) { const c = cols.find(x => x.key === state.key); if (!c) return arr; return [...arr].sort((a, b) => { const x = c.get(a), y = c.get(b); return (x < y ? -1 : x > y ? 1 : 0) * state.dir; }); }
+  function sevPill(s) { const p = el('span', 'sev'); const d = el('span', 'sw'); d.style.background = SEV_COLOR[s] || 'var(--neutral)'; p.append(d, document.createTextNode(s)); return p; }
+
+  // --------------------------------------------------------------- tiles ---
+  function renderTiles(fs) {
+    const t = $('tiles'); t.replaceChildren();
+    const reachable = new Set(fs.filter(f => f.reach).map(f => f.id)).size;
+    const allReach = new Set(FIND.filter(f => f.reach && (!$('fSub').value || f.sub === $('fSub').value)).map(f => f.id)).size;
+    const by = (s) => fs.filter(f => f.sev === s).length;
+    const mgmt = new Set(fs.filter(f => focusMatchMgmt(f)).map(f => f.id)).size;
+    const unused = FIND.filter(f => f.cat === 'Public IP' && /not attached/.test(f.finding) && (!$('fSub').value || f.sub === $('fSub').value)).length;
+    const defs = [
+      { hero: true, label: 'Internet-reachable resources', value: allReach, meta: `${fmtInt.format(reachable)} with findings in this view`, f: { kind: 'reach', label: 'Internet-reachable resources' } },
+      ...SEVS.slice(0, 4).map(s => ({ label: s.key, value: by(s.key), color: s.color, f: { kind: 'sev', value: s.key, label: `${s.key} findings` } })),
+      { label: 'Management ports open', value: mgmt, meta: 'SSH / RDP / WinRM to any address', color: 'var(--critical)', f: { kind: 'mgmt', label: 'Management ports open to the internet' } },
+      { label: 'Unused public IPs', value: unused, meta: 'attached to nothing', f: { kind: 'unused', label: 'Unused public IPs' } },
+    ];
+    defs.forEach(d => {
+      const b = el('button', 'tile' + (d.hero ? ' hero' : '')); b.type = 'button';
+      b.setAttribute('aria-pressed', focus && d.f && focus.label === d.f.label ? 'true' : 'false');
+      b.addEventListener('click', () => setFocus(d.f));
+      const l = el('span', 'label'); if (d.color) { const s = el('span', 'sw'); s.style.background = d.color; l.append(s); } l.append(document.createTextNode(d.label));
+      b.append(l, el('span', 'value', fmtInt.format(d.value))); if (d.meta) b.append(el('span', 'meta', d.meta));
+      t.append(b);
+    });
+  }
+  const focusMatchMgmt = (f) => (f.allPorts && (f.source || '').startsWith('Any internet')) || openPorts(f).some(p => MGMT.has(p));
+
+  // ------------------------------------------------- category stacked bars ---
+  function stacked(host, tableHost, lgHost, items, onClick, isFocused, unit) {
+    legend(lgHost, SEVS.map(s => ({ label: s.key, color: s.color })));
+    if (!items.length) { host.replaceChildren(el('p', 'muted', 'Nothing to show.')); tableHost.replaceChildren(); return; }
+    const W = Math.max(280, host.clientWidth), labelW = Math.min(190, W * 0.4), barH = 16, gap = 12;
+    const H = items.length * (barH + gap), plotW = W - labelW - 44;
+    const max = Math.max(1, ...items.map(i => i.total));
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': items.map(i => `${i.label} ${i.total}`).join(', ') });
+    svgEl('line', { x1: labelW, x2: labelW, y1: 0, y2: H - gap + 2, stroke: 'var(--axis)' }, svg);
+    const anyF = items.some(isFocused);
+    items.forEach((it, i) => {
+      const y = i * (barH + gap);
+      const g = svgEl('g', { class: 'hit', 'aria-label': `${it.label}: ${it.total} ${unit}` }, svg);
+      if (anyF && !isFocused(it)) g.setAttribute('opacity', '0.4');
+      svgEl('rect', { x: 0, y: y - gap / 2, width: W, height: barH + gap, fill: 'transparent' }, g);
+      svgEl('text', { x: labelW - 8, y: y + barH / 2 + 4, 'text-anchor': 'end', 'font-size': 12, fill: 'var(--ink-2)' }, g).textContent = truncate(it.label, Math.floor((labelW - 10) / 6.3));
+      let x = labelW + 1;
+      const vis = SEVS.filter(s => it[s.key]);
+      vis.forEach((s, si) => {
+        let w = plotW * it[s.key] / max; const gp = si > 0 ? 2 : 0; w = Math.max(1, w - gp); x += gp;
+        const last = si === vis.length - 1, r = last ? Math.min(4, barH / 2, w) : 0;
+        const d = last ? `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + barH - r}Q${x + w},${y + barH} ${x + w - r},${y + barH}H${x}Z` : `M${x},${y}H${x + w}V${y + barH}H${x}Z`;
+        svgEl('path', { d, fill: s.color, class: 'mark' }, g);
+        x += w;
+      });
+      svgEl('text', { x: x + 6, y: y + barH / 2 + 4, 'font-size': 12, 'font-weight': 600, fill: 'var(--ink)' }, g).textContent = fmtInt.format(it.total);
+      tipOn(g, (e) => {
+        const n = [el('div', 'v', `${fmtInt.format(it.total)} ${unit}`), el('div', 'k', it.label)];
+        SEVS.forEach(s => { if (!it[s.key]) return; const r = el('div', 'row'); const l = el('span'); const k = el('span', 'key'); k.style.background = s.color; l.append(k, document.createTextNode(s.key)); r.append(l, el('span', 'n', fmtInt.format(it[s.key]))); n.push(r); });
+        n.push(el('div', 'hint', 'click to list')); showTipNodes(e, n);
+      });
+      clickable(g, () => onClick(it));
+    });
+    host.replaceChildren(svg);
+    const tw = el('div'); dataTable(tw, ['Name', ...SEVS.map(s => s.key), 'Total'], items.map(it => [it.label, ...SEVS.map(s => fmtInt.format(it[s.key])), fmtInt.format(it.total)]));
+    tableHost.replaceChildren(tw.firstChild);
+  }
+
+  function renderCategories(fs) {
+    const m = new Map();
+    fs.forEach(f => { const o = m.get(f.cat) || Object.assign({ label: f.cat, total: 0 }, ...SEVS.map(s => ({ [s.key]: 0 }))); o[f.sev]++; o.total++; m.set(f.cat, o); });
+    const items = [...m.values()].sort((a, b) => SEVS.reduce((acc, s) => acc || (b[s.key] - a[s.key]), 0) || b.total - a.total);
+    stacked($('chCat'), $('tbCat'), $('lgCat'), items, it => setFocus({ kind: 'cat', value: it.label, label: `${it.label} findings` }), it => focus && focus.kind === 'cat' && focus.value === it.label, 'findings');
+  }
+
+  function renderPorts(fs) {
+    const m = new Map();
+    const add = (key, label, f) => { const o = m.get(key) || Object.assign({ key, label, total: 0, ids: new Set() }, ...SEVS.map(s => ({ [s.key]: 0 }))); if (!o.ids.has(f.id)) { o.ids.add(f.id); o[f.sev]++; o.total++; } m.set(key, o); };
+    fs.forEach(f => {
+      if (f.allPorts && (f.source || '').startsWith('Any internet')) add('all', 'All ports', f);
+      openPorts(f).forEach(p => add(p, `${p} ${PORT_NAMES[p] || ''}`.trim(), f));
+    });
+    const items = [...m.values()].sort((a, b) => b.total - a.total || String(a.label).localeCompare(String(b.label))).slice(0, 14);
+    stacked($('chPorts'), $('tbPorts'), $('lgPorts'), items, it => setFocus({ kind: 'port', value: it.key, label: `Open to the internet on ${it.label}` }), it => focus && focus.kind === 'port' && focus.value === it.key, 'resources');
+    if (!items.length) $('chPorts').replaceChildren(el('p', 'muted', 'No sensitive ports open to any internet address in this view.'));
+  }
+
+  // ---------------------------------------------------------- findings ----
+  function renderFindings(fs) {
+    const rows = fs.filter(focusMatch); view = rows;
+    const chip = $('focusChip'); chip.replaceChildren();
+    if (focus) {
+      const c = el('span', 'focus-chip'); c.append(el('span', '', focus.label));
+      const x = el('button', '', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Clear'); x.addEventListener('click', () => setFocus(null)); c.append(x); chip.append(c);
+    }
+    const resCount = new Set(rows.map(f => f.id)).size;
+    $('findSub').textContent = `${fmtInt.format(rows.length)} finding(s) on ${fmtInt.format(resCount)} resource(s)${focus ? ' · ' + focus.label : ''}. Sorted by severity; click a resource name for all its findings.`;
+    const cols = [
+      { key: 'sev', label: 'Severity', get: r => RANK[r.sev] * 10 + (r.reach ? 1 : 0), desc: true },
+      { key: 'name', label: 'Resource', get: r => (r.name || '').toLowerCase() },
+      { key: 'cat', label: 'Category', get: r => r.cat },
+      { key: 'exp', label: 'Exposure', get: r => (r.exposure || '').toLowerCase() },
+      { key: 'find', label: 'Finding and action', get: r => (r.finding || '').toLowerCase() },
+    ];
+    sortHeader($('findHead'), cols, sort, () => renderFindings(fs));
+    const body = $('findBody'); body.replaceChildren();
+    const sorted = sortBy(rows, cols, sort), frag = document.createDocumentFragment();
+    sorted.slice(0, page).forEach(r => {
+      const tr = el('tr');
+      const s = el('td', 'nowrap'); s.append(sevPill(r.sev)); if (!r.reach) s.append(el('div', 'muted small', 'not reachable')); tr.append(s);
+      const n = el('td', 'res'); const nb = el('button', 'link', r.name || '(unnamed)'); nb.type = 'button'; nb.title = r.id;
+      nb.addEventListener('click', () => setFocus({ kind: 'resource', value: r.id, label: `All findings for ${r.name}` }));
+      n.append(nb, el('div', 'muted small', [shortType(r.type), r.rg, r.subName].filter(Boolean).join(' · '))); tr.append(n);
+      tr.append(el('td', 'nowrap', r.cat));
+      const e = el('td', 'expo'); e.append(el('div', '', r.exposure || '—'));
+      const meta = [r.ip ? 'IP ' + r.ip : '', r.source, r.attached ? 'on ' + r.attached : ''].filter(Boolean).join(' · ');
+      if (meta) e.append(el('div', 'muted small', meta)); tr.append(e);
+      const f = el('td', 'find'); f.append(el('div', '', r.finding)); if (r.rec) f.append(el('div', 'rec', r.rec)); if (r.evidence) f.append(el('div', 'ev mono', r.evidence)); tr.append(f);
+      frag.append(tr);
+    });
+    body.append(frag);
+    if (!sorted.length) { const tr = el('tr'); const td = el('td', 'muted', 'No findings match.'); td.colSpan = cols.length; tr.append(td); body.append(tr); }
+    const more = $('findMore'); more.replaceChildren();
+    if (sorted.length > page) { more.append(el('span', '', `Showing ${fmtInt.format(page)} of ${fmtInt.format(sorted.length)}`)); const b = el('button', '', 'Show more'); b.type = 'button'; b.addEventListener('click', () => { page += 500; renderFindings(fs); }); more.append(b); }
+  }
+
+  function renderSubs() {
+    $('subHead').replaceChildren(...['Subscription', 'Resources checked', 'Internet-reachable', 'Private / restricted', 'Findings', 'Status'].map(h => el('th', '', h)));
+    const body = $('subBody'); body.replaceChildren();
+    [...SUBS].sort((a, b) => (b.errors ? 1 : 0) - (a.errors ? 1 : 0) || String(a.name).localeCompare(String(b.name))).forEach(s => {
+      const tr = el('tr');
+      const n = el('td'); n.append(el('div', '', s.name), el('div', 'muted small', s.id)); tr.append(n);
+      const fc = FIND.filter(f => f.sub === s.id && f.sev !== 'Info').length;
+      tr.append(el('td', 'num', fmtInt.format(s.checked)), el('td', 'num', fmtInt.format(s.pub)), el('td', 'num', fmtInt.format(s.priv)), el('td', 'num', fmtInt.format(fc)));
+      const st = el('td', 'wide'); st.style.maxWidth = '560px';
+      if (s.errors) { const p = el('span', 'sev'); const d = el('span', 'sw'); d.style.background = 'var(--warning)'; p.append(d, document.createTextNode('Incomplete')); st.append(p, el('div', 'muted small', s.errors)); }
+      else st.append(el('span', 'muted', 'OK'));
+      tr.append(st); body.append(tr);
+    });
+    $('subSub').textContent = `${META.scope ? META.scope + '. ' : ''}Resources checked counts public IPs, gateways, load balancers, Front Door and PaaS services. Subscriptions with errors may be missing findings.`;
+  }
+
+  function renderBanners() {
+    const b = $('banners'); b.replaceChildren();
+    const errs = SUBS.filter(s => s.errors);
+    if (errs.length) { const d = el('div', 'banner'); d.append(el('span', 'ico', '!'), el('div', '', `${errs.length} subscription(s) couldn't be fully assessed, so some findings may be missing. See the Subscriptions table.`)); b.append(d); }
+    const crit = FIND.filter(f => f.sev === 'Critical' && (!$('fSub').value || f.sub === $('fSub').value)).length;
+    if (crit) { const d = el('div', 'banner'); const i = el('span', 'ico', '!'); i.style.background = 'var(--critical)'; i.style.color = '#fff'; d.append(i, el('div', '', `${crit} critical finding(s): resources reachable from anywhere on the internet on sensitive ports, or data readable without signing in. Deal with these first.`)); b.append(d); }
+  }
+
+  function render() {
+    if (!FIND.length && !SUBS.length) return;
+    hideTip();
+    const fs = scoped(false), fsAll = scoped(true);
+    renderBanners(); renderTiles(fs); renderCategories(fsAll); renderPorts(fs); renderFindings(fs); renderSubs();
+  }
+
+  function exportRows() {
+    if (!view.length) return;
+    const cols = ['Severity', 'Category', 'ResourceName', 'ResourceType', 'ResourceGroup', 'SubscriptionName', 'SubscriptionId', 'Exposure', 'PublicIp', 'Ports', 'Source', 'AttachedTo', 'InternetReachable', 'Finding', 'Recommendation', 'Evidence', 'ResourceId'];
+    const esc = (v) => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    const lines = [cols.join(',')]; sortBy(view, [{ key: 'sev', get: r => RANK[r.sev] }], { key: 'sev', dir: -1 }).forEach(f => lines.push(cols.map(k => esc(String(f.raw[k] ?? ''))).join(',')));
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'public-exposure.csv'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ------------------------------------------------------------- sample ----
+  function sampleCsv() {
+    const head = ['RecordType', 'Severity', 'Category', 'ResourceName', 'ResourceType', 'ResourceGroup', 'SubscriptionId', 'SubscriptionName', 'Location', 'ResourceId', 'Exposure', 'PublicIp', 'Ports', 'Source', 'AttachedTo', 'InternetReachable', 'Finding', 'Recommendation', 'Evidence', 'ResourcesChecked', 'PublicResources', 'PrivateResources', 'Errors', 'Scope', 'ReportGeneratedUtc'];
+    const subs = [['Connectivity', 'a1b2c3d4-1111-4aaa-8bbb-000000000001'], ['Prod - Applications', 'a1b2c3d4-2222-4aaa-8bbb-000000000002'], ['Dev / Test', 'a1b2c3d4-3333-4aaa-8bbb-000000000003'], ['Sandbox', 'a1b2c3d4-4444-4aaa-8bbb-000000000004']];
+    const gen = '2026-11-18T03:30:00Z', scope = 'Management group mg-landingzones';
+    const rows = [];
+    const F = (sev, cat, si, rg, type, name, exposure, finding, rec, extra = {}) => rows.push(Object.assign({ RecordType: 'Finding', Severity: sev, Category: cat, ResourceName: name, ResourceType: type, ResourceGroup: rg, SubscriptionId: subs[si][1], SubscriptionName: subs[si][0], Location: 'uksouth',
+      ResourceId: `/subscriptions/${subs[si][1]}/resourceGroups/${rg}/providers/${type}/${name}`, Exposure: exposure, Finding: finding, Recommendation: rec, InternetReachable: 'True', ReportGeneratedUtc: gen }, extra));
+    const mgmt = 'Close management ports (SSH / RDP / WinRM) to the internet: use Azure Bastion, Just-in-time VM access or a VPN.';
+    const db = 'Never publish database / cache ports: reach them over private networking (private endpoint, VPN, peering).';
+    F('Critical', 'Virtual machine', 2, 'rg-dev-vm', 'microsoft.compute/virtualmachines', 'vm-dev-jump01', 'Internet -> 3389 (RDP), 443 (HTTPS) on 20.68.14.201', 'Reachable from any internet address on 443 (HTTPS), 3389 (RDP).', mgmt, { PublicIp: '20.68.14.201', Ports: '443,3389', Source: 'Any internet address', AttachedTo: 'VM vm-dev-jump01 (Standard public IP)', Evidence: 'nsg-dev-web/Allow-RDP-Any; nsg-dev-web/Allow-HTTPS' });
+    F('Critical', 'Virtual machine', 3, 'rg-sbx-alice', 'microsoft.compute/virtualmachines', 'vm-sbx-ubuntu', 'Internet -> all ports on 51.140.7.33', 'All ports are reachable from any internet address.', 'Replace the rule allowing all ports with rules for only the ports the service needs.', { PublicIp: '51.140.7.33', Ports: 'all ports', Source: 'Any internet address', AttachedTo: 'VM vm-sbx-ubuntu (Basic public IP)', Evidence: 'no NSG on the NIC or subnet (Basic public IP: open by default)' });
+    F('Critical', 'Virtual machine', 2, 'rg-dev-data', 'microsoft.compute/virtualmachines', 'vm-dev-sql01', 'Internet -> 1433 (SQL Server), 22 (SSH) on 20.68.15.9', 'Reachable from any internet address on 22 (SSH), 1433 (SQL Server).', mgmt + ' ' + db, { PublicIp: '20.68.15.9', Ports: '22,1433', Source: 'Any internet address', AttachedTo: 'VM vm-dev-sql01 (Standard public IP)', Evidence: 'nsg-dev-data/AllowSqlFromAnywhere; nsg-dev-data/Allow-SSH' });
+    F('Critical', 'Database', 2, 'rg-dev-data', 'microsoft.sql/servers', 'sql-dev-reporting', 'SQL server open to the internet', 'SQL server firewall allows every internet address.', 'Delete the 0.0.0.0 - 255.255.255.255 rule; use private endpoints, or allow only the specific addresses that need access.', { Source: 'Any internet address', Evidence: 'AllowAll (0.0.0.0 - 255.255.255.255)' });
+    F('Critical', 'Storage', 1, 'rg-prd-web', 'microsoft.storage/storageaccounts', 'stprdwebassets', 'Anonymous blob access', 'Anonymous (no sign-in) read access on container(s): exports (Container), images (Blob).', 'Set the containers to private and turn off "Allow blob anonymous access" on the account, unless the content is meant to be public (then use a CDN / Front Door).', { Source: 'Anyone', Evidence: 'exports (Container); images (Blob)' });
+    F('Critical', 'Firewall DNAT', 0, 'rg-hub-fw', 'microsoft.network/azurefirewalls', 'afw-hub-uks', 'Internet -> 3389 (RDP) via firewall', 'DNAT rules (policy afwp-hub) publish internal 3389 (RDP) to any internet address.', mgmt, { Ports: '3389', Source: 'Any internet address', Evidence: 'rdp-to-mgmt: 50001 -> 10.10.1.4:3389 from *' });
+    F('High', 'Application gateway', 1, 'rg-prd-web', 'microsoft.network/applicationgateways', 'agw-prd-shop', 'Internet -> 3 listener(s) on 20.90.11.4', 'No web application firewall (WAF) in front of the public listeners.', 'Use the WAF_v2 tier with a WAF policy in Prevention mode.', { PublicIp: '20.90.11.4', Source: 'Any internet address', Evidence: 'tier Standard_v2; WAF off' });
+    F('High', 'Kubernetes', 2, 'rg-dev-aks', 'microsoft.containerservice/managedclusters', 'aks-dev-01', 'Public Kubernetes API server', 'The Kubernetes API server is reachable from any internet address.', 'Set authorized IP ranges, or make it a private cluster (or use API server VNet integration).', { Source: 'Any internet address' });
+    F('High', 'Load balancer', 3, 'rg-sbx-lb', 'microsoft.network/loadbalancers', 'lb-sbx-game', 'Internet -> 22 (SSH), 80 (HTTP) on 51.140.9.2', 'Publishes 22 (SSH), 80 (HTTP) to the internet.', mgmt + ' Backends still need an NSG allowing the traffic (Standard SKU), so check those NSGs too.', { PublicIp: '51.140.9.2', Ports: '22,80', Source: 'Any internet address (subject to backend NSGs)', Evidence: 'ssh-nat -> 22 on 51.140.9.2; http -> 80 on 51.140.9.2' });
+    F('High', 'Database', 1, 'rg-prd-data', 'microsoft.documentdb/databaseaccounts', 'cosmos-prd-orders', 'Cosmos DB open to all networks', 'Cosmos DB accepts connections from all networks. It has 1 private endpoint(s): disable public network access if nothing needs it.', 'Restrict to selected networks (IP rules / VNet rules) or use private endpoints and disable public access.', { Source: 'Any internet address' });
+    F('High', 'Container', 2, 'rg-dev-apps', 'microsoft.containerregistry/registries', 'acrdevshared', 'Anonymous image pull', 'Anyone can pull images without signing in (anonymous pull).', 'Turn off anonymous pull unless the images are meant to be public.', { Source: 'Anyone' });
+    F('High', 'Database', 2, 'rg-dev-data', 'microsoft.sql/servers', 'sql-dev-reporting', 'SQL server open to broad ranges', 'SQL server firewall allows large address ranges (more than a /16).', 'Narrow the ranges to the addresses that need access, or use private endpoints.', { Source: 'Broad public ranges', Evidence: 'ISP-range (81.0.0.0 - 81.255.255.255)' });
+    F('High', 'App Service', 2, 'rg-dev-apps', 'microsoft.web/sites', 'app-dev-api', 'Public endpoint open to the internet', 'Remote debugging is on.', 'Turn remote debugging off.');
+    F('Medium', 'Application gateway', 1, 'rg-prd-web', 'microsoft.network/applicationgateways', 'agw-prd-shop', 'Internet -> 3 listener(s) on 20.90.11.4', 'HTTP listener(s) serving content unencrypted: listener-http.', 'Redirect HTTP to HTTPS (or remove the HTTP listener).', { PublicIp: '20.90.11.4', Source: 'Any internet address' });
+    F('Medium', 'Application gateway', 0, 'rg-hub-agw', 'microsoft.network/applicationgateways', 'agw-hub-portal', 'Internet -> 2 listener(s) on 20.90.12.8', 'WAF is in Detection mode: attacks are logged, not blocked.', 'Switch the WAF policy to Prevention mode once false positives are tuned.', { PublicIp: '20.90.12.8', Source: 'Any internet address', Evidence: 'tier WAF_v2; WAF Detection' });
+    F('Medium', 'Key Vault', 2, 'rg-dev-sec', 'microsoft.keyvault/vaults', 'kv-dev-apps', 'Key Vault open to all networks', 'Key Vault accepts connections from all networks.', 'Set the firewall to allow only selected networks (or trusted Microsoft services), or use private endpoints.', { Source: 'Any internet address' });
+    F('Medium', 'Key Vault', 3, 'rg-sbx-alice', 'microsoft.keyvault/vaults', 'kv-sbx-alice', 'Key Vault open to all networks', 'Key Vault accepts connections from all networks.', 'Set the firewall to allow only selected networks (or trusted Microsoft services), or use private endpoints.', { Source: 'Any internet address' });
+    F('Medium', 'Storage', 2, 'rg-dev-data', 'microsoft.storage/storageaccounts', 'stdevlanding', 'Storage endpoints open to all networks', 'Accepts connections from all networks.', 'Set the firewall default action to Deny and allow only the networks / services that need it, or use private endpoints.', { Source: 'Any internet address' });
+    F('Medium', 'Storage', 3, 'rg-sbx-alice', 'microsoft.storage/storageaccounts', 'stsbxalice01', 'Storage endpoints open to all networks', 'Accepts connections from all networks.', 'Set the firewall default action to Deny and allow only the networks / services that need it, or use private endpoints.', { Source: 'Any internet address' });
+    F('Medium', 'Database', 1, 'rg-prd-data', 'microsoft.sql/servers', 'sql-prd-core', 'SQL server open to all of Azure', 'SQL server allows all Azure services (any customer\'s Azure resources, not just yours).', 'Turn off "Allow Azure services and resources to access this server"; use private endpoints or VNet rules for your own services.', { Source: 'All Azure services', Evidence: 'AllowAllWindowsAzureIps (0.0.0.0 - 0.0.0.0)' });
+    F('Medium', 'Front Door', 1, 'rg-prd-edge', 'microsoft.cdn/profiles', 'afd-prd-global', 'Public Front Door endpoints', 'Front Door (Standard_AzureFrontDoor) has no security policy, so no WAF in front of its endpoints.', 'Add a security policy with a WAF policy in Prevention mode (Premium adds managed rule sets).', { Source: 'Any internet address' });
+    F('Medium', 'App Service', 2, 'rg-dev-apps', 'microsoft.web/sites', 'app-dev-api', 'Public endpoint open to the internet', 'Web app accepts plain HTTP (HTTPS only is off).', 'Turn on HTTPS only.');
+    F('Medium', 'AI services', 2, 'rg-dev-ai', 'microsoft.cognitiveservices/accounts', 'oai-dev-chat', 'AI service open to all networks', 'Azure AI service (OpenAI) accepts connections from all networks.', 'Restrict to selected networks or private endpoints.', { Source: 'Any internet address' });
+    F('Medium', 'Network rule', 0, 'rg-hub-net', 'microsoft.network/networksecuritygroups', 'nsg-hub-mgmt', 'Rule allows Internet -> 22 (SSH), 3389 (RDP)', 'Allows any internet address to 22 (SSH), 3389 (RDP) (no public IP leads to it directly today, but a load balancer, NAT rule or a public IP added later would).', mgmt, { Ports: '22,3389', Source: 'Any internet address', AttachedTo: 'snet-mgmt', InternetReachable: 'False', Evidence: 'nsg-hub-mgmt/Allow-Admin-Any' });
+    F('Medium', 'Routing', 2, 'rg-dev-net', 'microsoft.network/routetables', 'rt-dev-direct', 'Outbound 0.0.0.0/0 -> Internet', 'Route default-internet sends 0.0.0.0/0 straight to the internet for 2 subnet(s), bypassing any firewall.', 'Send internet-bound traffic through Azure Firewall / your NVA (next hop VirtualAppliance), or a NAT gateway for controlled outbound IPs.', { AttachedTo: 'snet-dev-web, snet-dev-app', InternetReachable: 'False' });
+    F('Low', 'Virtual machine', 1, 'rg-prd-ops', 'microsoft.compute/virtualmachines', 'vm-prd-ops01', 'Restricted ranges -> 22 (SSH) on 20.68.20.4', 'Sensitive ports open to specific public addresses only: 22 (SSH).', 'Check the source ranges are still needed and as narrow as possible; prefer Azure Bastion or Just-in-time access.', { PublicIp: '20.68.20.4', Ports: '22', Source: 'Specific public ranges', AttachedTo: 'VM vm-prd-ops01 (Standard public IP)', Evidence: 'nsg-prd-ops/Allow-SSH-Office from 203.0.113.10/32' });
+    F('Low', 'Database', 1, 'rg-prd-data', 'microsoft.dbforpostgresql/flexibleservers', 'psql-prd-billing', 'PostgreSQL server restricted to 2 range(s)', 'PostgreSQL server public endpoint allows 2 specific address range(s).', 'Prefer private endpoints and disable public network access; otherwise keep the list short and reviewed.', { Source: 'Specific public ranges', Evidence: 'office (203.0.113.10 - 203.0.113.10); partner (198.51.100.0 - 198.51.100.255)' });
+    F('Low', 'Kubernetes', 1, 'rg-prd-aks', 'microsoft.containerservice/managedclusters', 'aks-prd-01', 'Restricted public API server', 'The Kubernetes API server is public but limited to 3 authorized IP range(s).', 'Consider a private cluster.', { Source: 'Specific public ranges', Evidence: '203.0.113.0/24, 198.51.100.7/32, 192.0.2.0/28' });
+    F('Low', 'Public IP', 0, 'rg-hub-net', 'microsoft.network/publicipaddresses', 'pip-old-vpn', 'Not in use', 'Public IP not attached to anything.', 'Delete it if it isn\'t needed (it costs money and could be attached to something by mistake).', { PublicIp: '20.68.30.1', InternetReachable: 'False' });
+    F('Low', 'Public IP', 3, 'rg-sbx-alice', 'microsoft.network/publicipaddresses', 'pip-sbx-test2', 'Not in use', 'Public IP not attached to anything.', 'Delete it if it isn\'t needed (it costs money and could be attached to something by mistake).', { PublicIp: '51.140.9.77', InternetReachable: 'False' });
+    F('Low', 'Routing', 1, 'rg-prd-net', 'microsoft.network/virtualnetworks/subnets', 'vnet-prd/snet-batch', 'Outbound via default outbound access', 'Workloads in this subnet reach the internet through default outbound access (an implicit, shared Microsoft IP).', 'Give the subnet explicit outbound: a NAT gateway, or a 0.0.0.0/0 route to your firewall; then make it a private subnet (default outbound access off).', { InternetReachable: 'False' });
+    F('Low', 'Other PaaS', 2, 'rg-dev-msg', 'microsoft.eventhub/namespaces', 'evh-dev-telemetry', 'Public endpoint', 'Public network access is enabled (microsoft.eventhub/namespaces).', 'If it doesn\'t need to be reachable from the internet, disable public network access or restrict it with the service\'s firewall / private endpoints.', { Source: 'Any internet address (unless the service has other restrictions)' });
+    F('Low', 'Storage', 2, 'rg-dev-data', 'microsoft.storage/storageaccounts', 'stdevlanding', '', 'Minimum TLS version is TLS1_0.', 'Set the minimum TLS version to 1.2.', { InternetReachable: 'False' });
+    F('Info', 'Public IP', 0, 'rg-hub-net', 'microsoft.network/publicipaddresses', 'pip-hub-bastion', 'Azure Bastion', 'Azure Bastion: the recommended way to reach VMs; exposes only HTTPS.', 'No action.', { PublicIp: '20.68.1.10', AttachedTo: 'bas-hub-uks' });
+    F('Info', 'Public IP', 0, 'rg-hub-net', 'microsoft.network/publicipaddresses', 'pip-hub-vpngw', 'VPN / ExpressRoute gateway', 'VPN / ExpressRoute gateway: expected to be public.', 'No action.', { PublicIp: '20.68.1.11', AttachedTo: 'vgw-hub-uks' });
+    F('Info', 'Application gateway', 0, 'rg-hub-agw', 'microsoft.network/applicationgateways', 'agw-hub-intranet', 'Internet -> 1 listener(s) on 20.90.12.9', 'Public listeners behind a WAF in Prevention mode, HTTPS only.', 'No action.', { PublicIp: '20.90.12.9', Source: 'Any internet address' });
+    F('Info', 'App Service', 1, 'rg-prd-web', 'microsoft.web/sites', 'app-prd-shop', 'Public endpoint with access restrictions (2 access restriction(s))', 'Web app is reachable from the addresses its access restrictions allow.', 'No action.', { Source: 'Specific networks' });
+    F('Info', 'Virtual machine', 1, 'rg-prd-ops', 'microsoft.compute/virtualmachines', 'vm-prd-ftp01', 'Public IP 20.68.20.9 (no inbound ports open)', 'Has a public IP, but the NSGs block inbound internet traffic.', 'Remove the public IP if the VM doesn\'t need it; use Bastion for admin access.', { PublicIp: '20.68.20.9', AttachedTo: 'VM vm-prd-ftp01 (Standard public IP)' });
+    const stats = [[46, 11, 35, ''], [83, 14, 69, ''], [61, 19, 42, ''], [24, 9, 15, 'Front Door afd-sbx: HTTP 403 AuthorizationFailed']];
+    subs.forEach((s, i) => rows.push({ RecordType: 'Subscription', SubscriptionId: s[1], SubscriptionName: s[0], ResourceId: `/subscriptions/${s[1]}`, ResourcesChecked: stats[i][0], PublicResources: stats[i][1], PrivateResources: stats[i][2], Errors: stats[i][3], Scope: scope, ReportGeneratedUtc: gen }));
+    const esc = (v) => { v = String(v ?? ''); return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+    return [head.join(','), ...rows.map(r => head.map(h => esc(r[h])).join(','))].join('\r\n');
+  }
+
+  // ------------------------------------------------------------- wiring ----
+  function readFile(f) { if (!f) return; const rd = new FileReader(); rd.onload = () => load(String(rd.result), f.name); rd.readAsText(f); }
+  $('btnLoad').addEventListener('click', () => $('file').click());
+  $('file').addEventListener('change', e => { readFile(e.target.files[0]); e.target.value = ''; });
+  $('btnSample').addEventListener('click', () => load(sampleCsv(), 'Sample data'));
+  $('btnExport').addEventListener('click', exportRows);
+  ['fSub', 'fSev', 'fCat', 'fReach'].forEach(id => $(id).addEventListener('change', () => { page = 200; render(); }));
+  let st; $('fSearch').addEventListener('input', () => { clearTimeout(st); st = setTimeout(() => { page = 200; render(); }, 200); });
+  ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement) $('drop').classList.remove('over'); }));
+  document.addEventListener('drop', e => readFile(e.dataTransfer.files[0]));
+  let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (FIND.length) render(); }, 150); });
+  // Hosted mode: the reporting portal opens this page with ?src=/api/... to load a stored report.
+  // Only same-origin /api/ paths are accepted.
+  (() => {
+    const qs = new URLSearchParams(location.search);
+    const src = qs.get('src');
+    if (!src || !/^\/api\/[\w\-\/.]+$/.test(src)) return;
+    const msg = document.querySelector('#drop strong');
+    if (msg) msg.textContent = 'Loading report…';
+    fetch(src, { credentials: 'same-origin', cache: 'no-store' })
+      .then(async r => {
+        if (r.ok) return r.text();
+        let detail = `${r.status} ${r.statusText}`;
+        try { const j = await r.json(); if (j && j.error) detail = j.error; } catch (_) { /* not JSON */ }
+        throw new Error(detail);
+      })
+      .then(text => load(text, qs.get('label') || 'Latest report'))
+      .catch(e => { if (msg) msg.textContent = e.message; });
+  })();
+})();
+</script>
+</body>
+</html>

@@ -118,7 +118,7 @@ subscription and resource IDs, so it's git-ignored; keep a copy somewhere privat
 | Sign-in app registration | create one, or use an existing one by client ID |
 | Reader group | finds the group by name or ID; offers to create it |
 | Graph permissions now or by an admin | defaults to now if you have Privileged Role Administrator active |
-| Azure report scope | tenant root management group, a management group, chosen subscriptions, or none |
+| Azure reports scope (changes, public exposure) | tenant root management group, a management group, chosen subscriptions, or none |
 | Log Analytics | new workspace, or one of your existing workspaces |
 | Schedules and tags | defaults, or your own |
 | Can this machine reach the private network? | decides how the code is uploaded (see above) |
@@ -155,7 +155,7 @@ Contributor** on the VNet, **Private DNS Zone Contributor** on the privatelink z
 | Register private DNS records (only with DNS zones) | `Microsoft.Network/privateDnsZones/join/action` | Private DNS Zone Contributor | each zone |
 | Use an existing Log Analytics workspace (only if chosen) | `Microsoft.OperationalInsights/workspaces/read` | Reader | workspace |
 | Register resource providers (once, only if not registered: usually `Microsoft.App`) | `<provider>/register/action` | Contributor | subscription |
-| Give the identity **Reader** for the Azure changes report | `Microsoft.Authorization/roleAssignments/write` | User Access Administrator or RBAC Administrator | tenant root management group (or the management group / subscriptions you choose). At the tenant root this usually means a Global Administrator using *elevate access* |
+| Give the identity **Reader** for the Azure changes and public exposure reports | `Microsoft.Authorization/roleAssignments/write` | User Access Administrator or RBAC Administrator | tenant root management group (or the management group / subscriptions you choose). At the tenant root this usually means a Global Administrator using *elevate access* |
 
 **Entra ID** (activate PIM-eligible roles before running: the script only sees active roles)
 
@@ -232,7 +232,7 @@ The package is written into the app's private storage account by the app's **man
 | Where | Permission | Used by |
 |---|---|---|
 | Microsoft Graph (application) | `Directory.Read.All`, `AuditLog.Read.All`, `Application.Read.All`, `Policy.Read.All`, `RoleManagement.Read.Directory` | Entra reports, and account status for the Azure report's RBAC review (all read-only) |
-| Tenant root management group (or the management group / subscriptions you choose) | Reader | Azure changes report |
+| Tenant root management group (or the management group / subscriptions you choose) | Reader | Azure changes and public exposure reports (they cover whatever this scope covers) |
 | Reports storage `reports` container | Storage Blob Data Contributor | writing / reading reports |
 | Host storage | Blob Data Owner, Queue + Table Data Contributor | Functions runtime |
 | Application Insights | Monitoring Metrics Publisher | telemetry |
@@ -263,6 +263,7 @@ referenced by each timer.
 | Applications | Mondays 04:00 |
 | Conditional Access | Mondays 04:30 |
 | Authentication methods | Daily 03:00 |
+| Public exposure | Daily 03:30 |
 
 ## Adding a report (= a new tab)
 

@@ -62,7 +62,7 @@ param easyAuthAllowedGroupIds array = []
 @description('Tenant to report on.')
 param reportTenantId string = tenant().tenantId
 
-@description('NCRONTAB schedules in UTC: leastPrivilege, azureChanges, appSignIns, conditionalAccess, authMethods.')
+@description('NCRONTAB schedules in UTC: leastPrivilege, azureChanges, appSignIns, conditionalAccess, authMethods, publicExposure.')
 param schedules object = {}
 
 @description('Move dated report copies to cool storage after this many days.')
@@ -108,6 +108,7 @@ var sched = union({
   appSignIns: '0 0 4 * * 1'         // Mondays 04:00
   conditionalAccess: '0 30 4 * * 1' // Mondays 04:30
   authMethods: '0 0 3 * * *'        // daily 03:00
+  publicExposure: '0 30 3 * * *'    // daily 03:30
 }, schedules)
 var reportsContainerName = 'reports'
 var packageContainerName = 'app-package'
@@ -416,6 +417,7 @@ resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     SCHEDULE_APP_SIGNINS: sched.appSignIns
     SCHEDULE_CONDITIONAL_ACCESS: sched.conditionalAccess
     SCHEDULE_AUTH_METHODS: sched.authMethods
+    SCHEDULE_PUBLIC_EXPOSURE: sched.publicExposure
   }
 }
 

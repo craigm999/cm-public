@@ -91,6 +91,60 @@ the owners it inherits. **Over-privileged role assignments** charts the findings
 
 ---
 
+# Public exposure report
+
+Finds what in Azure can be reached from the internet, rates the risk of each finding (Critical,
+High, Medium, Low, Info) and says what to do about it.
+
+## 1. Generate the CSV
+
+```powershell
+Connect-AzAccount -TenantId contoso.onmicrosoft.com
+.\Get-AzurePublicExposureReport.ps1 -OutputPath .\exposure.csv                                   # every subscription you can see
+.\Get-AzurePublicExposureReport.ps1 -ManagementGroupId mg-landingzones -OutputPath .\exposure.csv # one management group
+.\Get-AzurePublicExposureReport.ps1 -SubscriptionId <id>, <id> -OutputPath .\exposure.csv         # chosen subscriptions
+```
+
+You need **Reader** on the scope. It reads everything with Azure Resource Graph (one query across
+all the subscriptions), plus a few per-resource calls for detail Resource Graph doesn't hold:
+database firewall rules, blob container access levels, App Service access restrictions, Firewall
+Policy DNAT rules and Front Door security policies (`-SkipDetailChecks` skips them all,
+`-SkipAppServiceConfig` just the App Service ones). Nothing is changed.
+
+| Area | What it checks |
+|---|---|
+| Public IPs | every public IP and what it's attached to; unused ones |
+| VMs | for a NIC with a public IP, which ports any internet address can reach, working through the NIC and subnet NSGs in priority order (with the default rules; a Basic public IP without an NSG is open, a Standard one closed) |
+| NSG rules | rules letting the internet reach management (SSH, RDP, WinRM), database, file-sharing / RPC or container ports, or every port |
+| Load balancers | ports published by public frontends (load-balancing and inbound NAT rules) |
+| Application gateways | WAF missing or in detection mode, HTTP listeners not redirecting to HTTPS, old TLS policies |
+| Azure Firewall | DNAT rules (classic and Firewall Policy) publishing internal ports |
+| Front Door / CDN | endpoints without a WAF policy |
+| Databases | SQL, PostgreSQL / MySQL flexible server firewall rules (whole internet, broad ranges, all Azure services), Cosmos DB, Redis |
+| Storage, Key Vault, registries, AI services | public network access and firewall default action; anonymous blob containers; anonymous image pull; admin user |
+| App Service / Functions | public access and access restrictions, HTTPS only, FTP, remote debugging, TLS |
+| AKS | public API server without authorized IP ranges |
+| Other PaaS | anything else with public network access enabled |
+| Routing | default route (0.0.0.0/0) sent straight to the internet; subnets relying on default outbound access |
+
+Severity in short: **Critical** – reachable now from any address on a sensitive port, or data
+readable without signing in; **High** – a likely way in (no WAF, public Kubernetes API, database
+open to all networks); **Medium** – public but should be restricted, or a weak setting; **Low** –
+restricted exposure or hygiene; **Info** – public by design and set up as expected.
+
+VM reachability reflects what the NSGs allow. It doesn't evaluate application security groups as
+sources, service tags other than Internet, or a firewall / NVA in front.
+
+## 2. View it
+
+Open `PublicExposureDashboard.html` and drop the CSV onto it (or **Sample data** for a demo).
+Tiles for internet-reachable resources, each severity, open management ports and unused public
+IPs; findings by category and sensitive ports open to the internet (click any bar or tile to list
+the findings); and the findings table with the exposure, evidence (rule names) and recommended
+action, filterable by subscription, severity, category and search, with **Export these rows**.
+
+---
+
 ## Running on a schedule
 
 These reports can be run automatically and published in a private, Entra-protected portal: see [ReportingPlatform](../ReportingPlatform/README.md).

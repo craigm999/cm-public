@@ -24,6 +24,15 @@
       }
     },
     {
+      "id": "public-exposure",
+      "title": "Public exposure",
+      "description": "Internet-facing Azure resources (public IPs, NSG rules, gateways, database firewalls, PaaS access, routing) with a risk rating and the action to take.",
+      "script": "Azure/Get-AzurePublicExposureReport.ps1",
+      "dashboard": "Azure/PublicExposureDashboard.html",
+      "auth": "managedIdentityParameter",
+      "parameters": {}
+    },
+    {
       "id": "auth-methods",
       "title": "Authentication methods",
       "description": "Registered sign-in methods per user and how strong they are.",
